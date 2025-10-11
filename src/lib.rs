@@ -46,7 +46,25 @@ impl Ap64 {
     /// Adds another adaptive precision value, returning the sum.
     pub fn add_expansion(&self, rhs: &Self) -> Self {
         let components = expansion_sum(self.components(), rhs.components());
-        Self::from_components(components)
+        let result = Self::from_components(components);
+        debug_assert!(result.check_invariants().is_ok());
+        result
+    }
+
+    /// Ensures the internal expansion satisfies required invariants.
+    pub fn check_invariants(&self) -> Result<(), &'static str> {
+        for &component in &self.components {
+            if !component.is_finite() {
+                return Err("Ap64 component must be finite");
+            }
+        }
+        if !is_sorted_by_magnitude(&self.components) {
+            return Err("Ap64 components must be sorted by increasing magnitude");
+        }
+        if !is_nonoverlapping_sorted(&self.components) {
+            return Err("Ap64 components must be nonoverlapping");
+        }
+        Ok(())
     }
 
     fn from_components(mut components: Vec<f64>) -> Self {
@@ -55,8 +73,9 @@ impl Ap64 {
         } else if components.len() > 1 {
             components.retain(|c| *c != 0.0);
         }
-        debug_assert!(is_sorted_by_magnitude(&components));
-        Self { components }
+        let result = Self { components };
+        debug_assert!(result.check_invariants().is_ok());
+        result
     }
 }
 
@@ -176,6 +195,12 @@ fn compare_magnitude(a: f64, b: f64) -> Ordering {
     }
 }
 
+fn is_sorted_by_magnitude(components: &[f64]) -> bool {
+    components
+        .windows(2)
+        .all(|pair| compare_magnitude(pair[0], pair[1]) != Ordering::Greater)
+}
+
 fn two_sum(a: f64, b: f64) -> (f64, f64) {
     let sum = a + b;
     let b_virtual = sum - a;
@@ -200,10 +225,47 @@ fn fast_two_sum(a: f64, b: f64) -> (f64, f64) {
     (sum, err)
 }
 
-fn is_sorted_by_magnitude(components: &[f64]) -> bool {
-    components
-        .windows(2)
-        .all(|pair| compare_magnitude(pair[0], pair[1]) != Ordering::Greater)
+fn ulp(value: f64) -> f64 {
+    if value == 0.0 {
+        f64::MIN_POSITIVE
+    } else {
+        let abs = value.abs();
+        let bits = abs.to_bits();
+        if bits == f64::INFINITY.to_bits() {
+            f64::INFINITY
+        } else {
+            let next = f64::from_bits(bits + 1);
+            next - abs
+        }
+    }
+}
+
+fn is_nonoverlapping_sorted(components: &[f64]) -> bool {
+    if components.len() <= 1 {
+        return true;
+    }
+
+    for pair in components.windows(2) {
+        let low = pair[0];
+        let high = pair[1];
+
+        if compare_magnitude(low, high) == Ordering::Greater {
+            return false;
+        }
+
+        if high == 0.0 {
+            if low != 0.0 {
+                return false;
+            }
+            continue;
+        }
+
+        if low.abs() > ulp(high) {
+            return false;
+        }
+    }
+
+    true
 }
 
 #[cfg(test)]
@@ -214,25 +276,13 @@ mod tests {
     use quickcheck::TestResult;
     use quickcheck_macros::quickcheck;
 
-    fn is_nonoverlapping(expansion: &[f64]) -> bool {
-        if expansion.len() <= 1 {
-            return true;
-        }
-
-        for pair in expansion.windows(2) {
-            if compare_magnitude(pair[0], pair[1]) == Ordering::Greater {
-                return false;
-            }
-        }
-        true
-    }
-
     #[test]
     fn zero_behaves() {
         let z = Ap64::zero();
         assert!(z.is_zero());
         assert_eq!(z.approx(), 0.0);
         assert!(z.components().is_empty());
+        z.check_invariants().unwrap();
     }
 
     #[test]
@@ -242,7 +292,7 @@ mod tests {
         let sum = &a + &b;
         assert!(!sum.is_zero());
         assert_eq!(sum.approx(), 3.75);
-        assert!(is_nonoverlapping(sum.components()));
+        sum.check_invariants().unwrap();
         assert_eq!(sum.components().len(), 1);
     }
 
@@ -253,7 +303,7 @@ mod tests {
         let c = Ap64::from(-1.0e16);
 
         let sum = (&a + &b) + &c;
-        assert!(is_nonoverlapping(sum.components()));
+        sum.check_invariants().unwrap();
         assert_eq!(sum.approx(), 1.0);
     }
 
@@ -274,7 +324,7 @@ mod tests {
         acc += Ap64::from(0.125);
         acc += &Ap64::from(0.25);
         assert_eq!(acc.approx(), 0.5);
-        assert!(is_nonoverlapping(acc.components()));
+        acc.check_invariants().unwrap();
     }
 
     fn f64_to_rational(value: f64) -> Option<BigRational> {
@@ -308,6 +358,9 @@ mod tests {
         };
 
         let lhs = &Ap64::from(x) + &Ap64::from(y);
+        if let Err(err) = lhs.check_invariants() {
+            return TestResult::error(err);
+        }
         let lhs_rational = match ap64_to_rational(&lhs) {
             Some(r) => r,
             None => return TestResult::discard(),
@@ -333,5 +386,14 @@ mod tests {
             x,
             y
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "Ap64 components must be nonoverlapping")]
+    fn overlapping_components_fail_invariants() {
+        let invalid = Ap64 {
+            components: vec![0.75, 1.0],
+        };
+        invalid.check_invariants().unwrap();
     }
 }

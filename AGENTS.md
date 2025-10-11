@@ -31,3 +31,9 @@
 ## Additional Tips
 - Benchmarks depend on Criterion 0.5; keep sample sizes reasonable to preserve runtime in CI.
 - When introducing new predicates, mirror existing patterns: offer `Coord`-friendly APIs, rational cross-checks, and QuickCheck comparisons with external references (`robust`).
+
+## Performance & Benchmarking
+- Profile `orient2d` variants with existing Criterion benches; inspect generated machine code via `cargo asm --lib apfp::geometry::predicates::orient2d`.
+- Avoid runtime memory allocations whenever possible; prefer fixed-size stack buffers for intermediate storage.
+- Keep adaptive kernels allocation-free so tight loops remain cache-friendly and deterministic.
+- Distinguish the adaptive code paths: quick-exit when points are obviously non-co-linear, use the near-co-linear expansion lift when magnitudes suggest cancellation, and fall back to the exact co-linear resolution path that computes and returns the signed area directly.

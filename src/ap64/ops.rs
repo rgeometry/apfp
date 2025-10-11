@@ -7,7 +7,13 @@ impl Ap64 {
     /// Adds another adaptive precision value, returning the sum.
     pub fn add_expansion(&self, rhs: &Self) -> Self {
         let components = expansion_sum(self.components(), rhs.components());
-        let result = Self::from_components(components);
+        #[cfg(feature = "short-circuit")]
+        let range = self.range + rhs.range;
+        let result = Self::from_components(
+            components,
+            #[cfg(feature = "short-circuit")]
+            range,
+        );
         debug_assert!(result.check_invariants().is_ok());
         result
     }
@@ -15,7 +21,13 @@ impl Ap64 {
     /// Multiplies another adaptive precision value, returning the product.
     pub fn mul_expansion(&self, rhs: &Self) -> Self {
         let components = expansion_product(self.components(), rhs.components());
-        let result = Self::from_components(components);
+        #[cfg(feature = "short-circuit")]
+        let range = self.range * rhs.range;
+        let result = Self::from_components(
+            components,
+            #[cfg(feature = "short-circuit")]
+            range,
+        );
         debug_assert!(result.check_invariants().is_ok());
         result
     }
@@ -97,8 +109,17 @@ impl Neg for Ap64 {
     type Output = Ap64;
 
     fn neg(self) -> Ap64 {
-        let components: Vec<f64> = self.components().iter().map(|c| -c).collect();
-        Ap64::from_components(components)
+        #[cfg(feature = "short-circuit")]
+        let Ap64 { components, range } = self;
+        #[cfg(not(feature = "short-circuit"))]
+        let Ap64 { components } = self;
+
+        let components: Vec<f64> = components.into_iter().map(|c| -c).collect();
+        Ap64::from_components(
+            components,
+            #[cfg(feature = "short-circuit")]
+            -range,
+        )
     }
 }
 

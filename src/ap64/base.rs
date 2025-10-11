@@ -1,46 +1,15 @@
+#[cfg(feature = "short-circuit")]
+use super::range::Range;
 use crate::expansion::{is_nonoverlapping_sorted, is_sorted_by_magnitude};
+use std::cmp::Ordering;
 
 /// Adaptive precision floating-point value represented as a nonoverlapping
 /// expansion of IEEE `f64` components stored in increasing magnitude order.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Ap64 {
-    components: Vec<f64>,
+    pub(crate) components: Vec<f64>,
     #[cfg(feature = "short-circuit")]
-    range: Range,
-}
-
-#[cfg(feature = "short-circuit")]
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct Range {
-    center: f64,
-    radius: f64,
-}
-
-#[cfg(feature = "short-circuit")]
-impl Range {
-    fn new(center: f64, radius: f64) -> Self {
-        let radius = radius.abs();
-        Self { center, radius }
-    }
-
-    fn zero() -> Self {
-        Self::new(0.0, 0.0)
-    }
-
-    fn from_components(components: &[f64]) -> Self {
-        if components.is_empty() {
-            return Self::zero();
-        }
-
-        let (center, radius) = approximate_with_error(components);
-        Self::new(center, radius)
-    }
-
-    fn contains(&self, value: f64) -> bool {
-        let lower = self.center - self.radius;
-        let upper = self.center + self.radius;
-        lower <= value && value <= upper
-    }
+    pub(crate) range: Range,
 }
 
 impl Ap64 {
@@ -95,6 +64,76 @@ impl Ap64 {
         self.components.is_empty()
     }
 
+    /// Compares this value with another adaptive value.
+    pub fn compare(&self, rhs: &Self) -> Ordering {
+        #[cfg(feature = "short-circuit")]
+        {
+            let (self_lower, self_upper) = self.bounds();
+            let (rhs_lower, rhs_upper) = rhs.bounds();
+            if self_lower > rhs_upper {
+                return Ordering::Greater;
+            }
+            if self_upper < rhs_lower {
+                return Ordering::Less;
+            }
+        }
+
+        if self.is_zero() && rhs.is_zero() {
+            return Ordering::Equal;
+        }
+
+        let mut i = self.components.len();
+        let mut j = rhs.components.len();
+
+        loop {
+            while i > 0 && self.components[i - 1] == 0.0 {
+                i -= 1;
+            }
+            while j > 0 && rhs.components[j - 1] == 0.0 {
+                j -= 1;
+            }
+
+            if i == 0 && j == 0 {
+                return Ordering::Equal;
+            }
+
+            if i == 0 {
+                let b = rhs.components[j - 1];
+                if b > 0.0 {
+                    return Ordering::Less;
+                }
+                if b < 0.0 {
+                    return Ordering::Greater;
+                }
+                j -= 1;
+                continue;
+            }
+
+            if j == 0 {
+                let a = self.components[i - 1];
+                if a > 0.0 {
+                    return Ordering::Greater;
+                }
+                if a < 0.0 {
+                    return Ordering::Less;
+                }
+                i -= 1;
+                continue;
+            }
+
+            let a = self.components[i - 1];
+            let b = rhs.components[j - 1];
+            if a > b {
+                return Ordering::Greater;
+            }
+            if a < b {
+                return Ordering::Less;
+            }
+            i -= 1;
+            j -= 1;
+        }
+    }
+
     /// Ensures the internal expansion satisfies required invariants.
     pub fn check_invariants(&self) -> Result<(), &'static str> {
         for &component in &self.components {
@@ -129,14 +168,20 @@ impl Ap64 {
         Ok(())
     }
 
-    pub(crate) fn from_components(mut components: Vec<f64>) -> Self {
+    pub(crate) fn from_components(
+        mut components: Vec<f64>,
+        #[cfg(feature = "short-circuit")] mut range: Range,
+    ) -> Self {
         if components.len() == 1 && components[0] == 0.0 {
             components.clear();
         } else if components.len() > 1 {
             components.retain(|c| *c != 0.0);
         }
         #[cfg(feature = "short-circuit")]
-        let range = Range::from_components(&components);
+        {
+            let derived = Range::from_components(&components);
+            range.include(&derived);
+        }
         let result = Self {
             #[cfg(feature = "short-circuit")]
             range,
@@ -168,20 +213,6 @@ impl From<f64> for Ap64 {
     fn from(value: f64) -> Self {
         Ap64::from_f64(value)
     }
-}
-
-#[cfg(feature = "short-circuit")]
-fn approximate_with_error(components: &[f64]) -> (f64, f64) {
-    use crate::expansion::two_sum;
-
-    let mut approx = 0.0;
-    let mut error = 0.0;
-    for &component in components.iter().rev() {
-        let (sum, err) = two_sum(approx, component);
-        approx = sum;
-        error += err.abs();
-    }
-    (approx, error)
 }
 
 #[cfg(all(test, feature = "short-circuit"))]

@@ -1,4 +1,4 @@
-use apfp::{Coord, GeometryPredicateResult, orient2d};
+use apfp::{Coord, GeometryPredicateResult, orient2d, orient2d_fixed};
 use criterion::{Criterion, criterion_group, criterion_main};
 use num_rational::BigRational;
 use num_traits::{Signed, Zero};
@@ -19,6 +19,12 @@ fn orient2d_rational_batch(samples: &[(Coord, Coord, Coord)]) {
     }
 }
 
+fn orient2d_fixed_batch(samples: &[(Coord, Coord, Coord)]) {
+    for (a, b, c) in samples {
+        black_box(orient2d_fixed(a, b, c));
+    }
+}
+
 fn orient2d_robust_batch(samples: &[(Coord, Coord, Coord)]) {
     for (a, b, c) in samples {
         black_box(robust_orient2d(a, b, c));
@@ -30,6 +36,10 @@ fn bench_orient2d(c: &mut Criterion) {
 
     c.bench_function("orient2d_apfp", |b| {
         b.iter(|| orient2d_apfp_batch(black_box(&samples)))
+    });
+
+    c.bench_function("orient2d_fixed", |b| {
+        b.iter(|| orient2d_fixed_batch(black_box(&samples)))
     });
 
     c.bench_function("orient2d_rational", |b| {

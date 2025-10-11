@@ -1,4 +1,5 @@
-use crate::Ap64;
+use crate::{Ap64, Ap64Fixed};
+use std::cmp::Ordering;
 
 use super::Coord;
 
@@ -30,6 +31,25 @@ impl GeometryPredicateResult {
             GeometryPredicateResult::Negative
         }
     }
+
+    #[inline(always)]
+    fn from_fixed<const N: usize>(value: &Ap64Fixed<N>) -> Self {
+        if value.is_zero() {
+            GeometryPredicateResult::Zero
+        } else if value.approx() > 0.0 {
+            GeometryPredicateResult::Positive
+        } else {
+            GeometryPredicateResult::Negative
+        }
+    }
+
+    fn from_ordering(ordering: Ordering) -> Self {
+        match ordering {
+            Ordering::Greater => GeometryPredicateResult::Positive,
+            Ordering::Less => GeometryPredicateResult::Negative,
+            Ordering::Equal => GeometryPredicateResult::Zero,
+        }
+    }
 }
 
 pub fn orient2d(a: &Coord, b: &Coord, c: &Coord) -> GeometryPredicateResult {
@@ -45,8 +65,40 @@ pub fn orient2d(a: &Coord, b: &Coord, c: &Coord) -> GeometryPredicateResult {
     let cax = &cx - &ax;
     let cay = &cy - &ay;
 
+    let left = &bax * &cay;
+    let right = &bay * &cax;
+    GeometryPredicateResult::from_ordering(left.compare(&right))
+}
+
+#[inline(always)]
+fn fixed_from_f64(value: f64) -> Ap64Fixed<4> {
+    let mut result = Ap64Fixed::<4>::zero();
+    if value != 0.0 {
+        result
+            .push(value)
+            .expect("Ap64Fixed<4> must have space for a single component");
+    }
+    result
+}
+
+pub fn orient2d_fixed(a: &Coord, b: &Coord, c: &Coord) -> GeometryPredicateResult {
+    let ax = fixed_from_f64(a.x);
+    let ay = fixed_from_f64(a.y);
+    let bx = fixed_from_f64(b.x);
+    let by = fixed_from_f64(b.y);
+    let cx = fixed_from_f64(c.x);
+    let cy = fixed_from_f64(c.y);
+
+    let bax = &bx - &ax; // 2
+    let bay = &by - &ay; // 2
+    let cax = &cx - &ax; // 2
+    let cay = &cy - &ay; // 2
+
+    // (a + b) * (c + d) = (a + b) * c + (a + b) * d = ac + ad + bc + bd
+    // (a + b) * (c + d) = ac + ad + bc + bd
+
     let det = (&bax * &cay) - &(&bay * &cax);
-    GeometryPredicateResult::from_value(&det)
+    GeometryPredicateResult::from_fixed(&det)
 }
 
 pub fn incircle(a: &Coord, b: &Coord, c: &Coord, d: &Coord) -> GeometryPredicateResult {

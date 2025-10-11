@@ -11,6 +11,8 @@
 - `cargo clippy --all-targets` – run lint checks for lib, tests, and benches.
 - `cargo test` – execute unit, property, and integration tests.
 - `cargo bench --bench orient2d_bench` – benchmark `orient2d` variants.
+- `nix flake check` – runs the full Crane QA stack (fmt, clippy, doc, Taplo, nextest, audit) using the pinned toolchain.
+- `nix run .#format` – one-touch formatter that chains `cargo fmt`, `taplo fmt`, and `alejandra .`.
 
 ## Coding Style & Naming Conventions
 - Rust 2024 edition; follow `rustfmt` defaults (run `cargo fmt` before committing).

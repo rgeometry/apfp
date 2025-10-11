@@ -21,7 +21,7 @@ impl Ap64 {
     }
 }
 
-impl<'a, 'b> Add<&'b Ap64> for &'a Ap64 {
+impl<'b> Add<&'b Ap64> for &Ap64 {
     type Output = Ap64;
 
     fn add(self, rhs: &'b Ap64) -> Ap64 {
@@ -57,7 +57,7 @@ impl AddAssign<&Ap64> for Ap64 {
     }
 }
 
-impl<'a, 'b> Mul<&'b Ap64> for &'a Ap64 {
+impl<'b> Mul<&'b Ap64> for &Ap64 {
     type Output = Ap64;
 
     fn mul(self, rhs: &'b Ap64) -> Ap64 {
@@ -110,7 +110,7 @@ impl Neg for &Ap64 {
     }
 }
 
-impl<'a, 'b> Sub<&'b Ap64> for &'a Ap64 {
+impl<'b> Sub<&'b Ap64> for &Ap64 {
     type Output = Ap64;
 
     fn sub(self, rhs: &'b Ap64) -> Ap64 {

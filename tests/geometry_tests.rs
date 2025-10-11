@@ -183,6 +183,7 @@ fn property_orient2d_consistency(
     TestResult::from_bool(ours == rational_result && ours == robust_result)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn property_incircle_consistency(
     ax: f64,
     ay: f64,

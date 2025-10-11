@@ -3,6 +3,7 @@ use ntest::timeout;
 use num_rational::BigRational;
 use num_traits::Zero;
 use quickcheck::{QuickCheck, TestResult};
+use std::f64::consts::PI;
 use std::panic::{self, AssertUnwindSafe};
 
 const MAG_LIMIT: f64 = 1.0e12;
@@ -69,7 +70,7 @@ fn mul_assign_works() {
 #[test]
 #[timeout(5000)]
 fn multiplication_handles_zero() {
-    let a = Ap64::from(3.14159);
+    let a = Ap64::from(PI);
     let zero = Ap64::zero();
     let prod = &a * &zero;
     assert!(prod.is_zero());

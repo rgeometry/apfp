@@ -103,4 +103,25 @@ mod tests {
         let invalid = Ap64::from_raw_components(vec![0.75, 1.0]);
         invalid.check_invariants().unwrap();
     }
+
+    #[test]
+    #[should_panic(expected = "Ap64 components must be sorted by increasing magnitude")]
+    fn unsorted_components_fail_invariants() {
+        let invalid = Ap64::from_raw_components(vec![1.0, 0.5]);
+        invalid.check_invariants().unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "Ap64 component must be finite")]
+    fn non_finite_component_fails_invariants() {
+        let invalid = Ap64::from_raw_components(vec![f64::NAN]);
+        invalid.check_invariants().unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "Ap64 components must be sorted by increasing magnitude")]
+    fn zero_followed_by_nonzero_fails() {
+        let invalid = Ap64::from_raw_components(vec![0.0, 1.0e-16, 0.0]);
+        invalid.check_invariants().unwrap();
+    }
 }

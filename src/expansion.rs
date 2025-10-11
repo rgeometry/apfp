@@ -206,3 +206,54 @@ fn split(a: f64) -> (f64, f64) {
     let alo = a - ahi;
     (ahi, alo)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn two_sum_splits_roundoff() {
+        let (sum, err) = two_sum(1.0e16, 1.0);
+        assert_eq!(sum, 1.0e16 + 1.0);
+        assert_eq!(err, 1.0);
+    }
+
+    #[test]
+    fn two_product_captures_error() {
+        let (prod, err) = two_product(1.0e16, 1.0e-16);
+        assert_eq!(prod, 1.0);
+        assert!(err.abs() <= f64::EPSILON);
+    }
+
+    #[test]
+    fn scale_expansion_produces_nonoverlapping() {
+        let expansion = [1.0, 1.0e16];
+        let scaled = scale_expansion(&expansion, 0.5);
+        assert!(is_sorted_by_magnitude(&scaled));
+        assert!(is_nonoverlapping_sorted(&scaled));
+    }
+
+    #[test]
+    fn expansion_sum_preserves_ordering() {
+        let a = vec![1.0, 1.0e16];
+        let b = vec![2.0, 1.0e15];
+        let sum = expansion_sum(&a, &b);
+        assert!(is_sorted_by_magnitude(&sum));
+        assert!(is_nonoverlapping_sorted(&sum));
+    }
+
+    #[test]
+    fn expansion_product_matches_expected_value() {
+        let a = vec![1.0, 1.0e16];
+        let b = vec![2.0];
+        let prod = expansion_product(&a, &b);
+        let value: f64 = prod.iter().sum();
+        assert!((value - (2.0 + 2.0e16)).abs() < 1.0);
+    }
+
+    #[test]
+    fn compare_magnitude_orders_by_abs() {
+        assert_eq!(compare_magnitude(-3.0, 2.0), Ordering::Greater);
+        assert_eq!(compare_magnitude(1.0, -1.0), Ordering::Equal);
+    }
+}

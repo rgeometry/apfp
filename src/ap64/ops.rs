@@ -1,5 +1,5 @@
 use crate::expansion::{expansion_product, expansion_sum};
-use std::ops::{Add, AddAssign, Mul, MulAssign};
+use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use super::Ap64;
 
@@ -90,6 +90,59 @@ impl MulAssign for Ap64 {
 impl MulAssign<&Ap64> for Ap64 {
     fn mul_assign(&mut self, rhs: &Ap64) {
         *self = (&*self).mul(rhs);
+    }
+}
+
+impl Neg for Ap64 {
+    type Output = Ap64;
+
+    fn neg(self) -> Ap64 {
+        let components: Vec<f64> = self.components().iter().map(|c| -c).collect();
+        Ap64::from_components(components)
+    }
+}
+
+impl Neg for &Ap64 {
+    type Output = Ap64;
+
+    fn neg(self) -> Ap64 {
+        self.clone().neg()
+    }
+}
+
+impl<'a, 'b> Sub<&'b Ap64> for &'a Ap64 {
+    type Output = Ap64;
+
+    fn sub(self, rhs: &'b Ap64) -> Ap64 {
+        self.add(&(-rhs))
+    }
+}
+
+impl Sub for Ap64 {
+    type Output = Ap64;
+
+    fn sub(self, rhs: Ap64) -> Ap64 {
+        (&self).sub(&rhs)
+    }
+}
+
+impl Sub<&Ap64> for Ap64 {
+    type Output = Ap64;
+
+    fn sub(self, rhs: &Ap64) -> Ap64 {
+        (&self).sub(rhs)
+    }
+}
+
+impl SubAssign for Ap64 {
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = (&*self).sub(&rhs);
+    }
+}
+
+impl SubAssign<&Ap64> for Ap64 {
+    fn sub_assign(&mut self, rhs: &Ap64) {
+        *self = (&*self).sub(rhs);
     }
 }
 

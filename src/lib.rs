@@ -297,8 +297,7 @@ mod tests {
             })
     }
 
-    #[quickcheck]
-    fn quickcheck_ap64_add_matches_rational(x: f64, y: f64) -> TestResult {
+    fn property_ap64_add_matches_rational(x: f64, y: f64) -> TestResult {
         let x_rational = match f64_to_rational(x) {
             Some(r) => r,
             None => return TestResult::discard(),
@@ -316,5 +315,23 @@ mod tests {
 
         let rhs_rational = x_rational + y_rational;
         TestResult::from_bool(lhs_rational == rhs_rational)
+    }
+
+    #[quickcheck]
+    fn quickcheck_ap64_add_matches_rational(x: f64, y: f64) -> TestResult {
+        property_ap64_add_matches_rational(x, y)
+    }
+
+    #[test]
+    fn property_handles_explicit_nonoverlapping_pair() {
+        let x = 1.0f64;
+        let y = 2f64.powi(-54);
+        let result = property_ap64_add_matches_rational(x, y);
+        assert!(
+            !result.is_failure(),
+            "property failed for explicit pair {} + {}",
+            x,
+            y
+        );
     }
 }

@@ -11,6 +11,17 @@ pub enum GeometryPredicateResult {
 
 impl GeometryPredicateResult {
     fn from_value(value: &Ap64) -> Self {
+        #[cfg(feature = "short-circuit")]
+        {
+            let (lower, upper) = value.bounds();
+            if lower > 0.0 {
+                return GeometryPredicateResult::Positive;
+            }
+            if upper < 0.0 {
+                return GeometryPredicateResult::Negative;
+            }
+        }
+
         if value.is_zero() {
             GeometryPredicateResult::Zero
         } else if value.approx() > 0.0 {

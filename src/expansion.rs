@@ -77,6 +77,49 @@ pub(crate) fn is_nonoverlapping_sorted(components: &[f64]) -> bool {
     true
 }
 
+pub(crate) fn expansion_product(lhs: &[f64], rhs: &[f64]) -> Vec<f64> {
+    if lhs.is_empty() || rhs.is_empty() {
+        return Vec::new();
+    }
+    let mut result: Vec<f64> = Vec::new();
+    for &component in rhs {
+        let scaled = scale_expansion(lhs, component);
+        result = expansion_sum(&result, &scaled);
+    }
+    result
+}
+
+pub(crate) fn scale_expansion(expansion: &[f64], scalar: f64) -> Vec<f64> {
+    if expansion.is_empty() {
+        return Vec::new();
+    }
+    let mut h = Vec::with_capacity(expansion.len() * 2);
+    let (product1, product0) = two_product(expansion[0], scalar);
+    if product0 != 0.0 {
+        h.push(product0);
+    }
+    let mut q = product1;
+
+    for &component in &expansion[1..] {
+        let (product1, product0) = two_product(component, scalar);
+        let (sum, err3) = two_sum(q, product0);
+        if err3 != 0.0 {
+            h.push(err3);
+        }
+        let (new_q, err4) = fast_two_sum(product1, sum);
+        if err4 != 0.0 {
+            h.push(err4);
+        }
+        q = new_q;
+    }
+
+    if q != 0.0 || h.is_empty() {
+        h.push(q);
+    }
+
+    h
+}
+
 #[allow(dead_code)]
 pub(crate) fn fast_two_sum(a: f64, b: f64) -> (f64, f64) {
     debug_assert!(
@@ -99,6 +142,17 @@ pub(crate) fn two_sum(a: f64, b: f64) -> (f64, f64) {
     let a_roundoff = a - a_virtual;
     let err = a_roundoff + b_roundoff;
     (sum, err)
+}
+
+pub(crate) fn two_product(a: f64, b: f64) -> (f64, f64) {
+    let product = a * b;
+    let (ahi, alo) = split(a);
+    let (bhi, blo) = split(b);
+    let err1 = product - (ahi * bhi);
+    let err2 = err1 - (alo * bhi);
+    let err3 = err2 - (ahi * blo);
+    let err = (alo * blo) - err3;
+    (product, err)
 }
 
 pub(crate) fn compare_magnitude(a: f64, b: f64) -> Ordering {
@@ -142,4 +196,13 @@ fn ulp(value: f64) -> f64 {
             next - abs
         }
     }
+}
+
+fn split(a: f64) -> (f64, f64) {
+    const SPLITTER: f64 = 134_217_729.0; // 2^27 + 1
+    let c = SPLITTER * a;
+    let abig = c - a;
+    let ahi = c - abig;
+    let alo = a - ahi;
+    (ahi, alo)
 }

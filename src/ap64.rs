@@ -1,5 +1,7 @@
-use crate::expansion::{expansion_sum, is_nonoverlapping_sorted, is_sorted_by_magnitude};
-use std::ops::{Add, AddAssign};
+use crate::expansion::{
+    expansion_product, expansion_sum, is_nonoverlapping_sorted, is_sorted_by_magnitude,
+};
+use std::ops::{Add, AddAssign, Mul, MulAssign};
 
 /// Adaptive precision floating-point value represented as a nonoverlapping
 /// expansion of IEEE `f64` components stored in increasing magnitude order.
@@ -46,6 +48,14 @@ impl Ap64 {
     /// Adds another adaptive precision value, returning the sum.
     pub fn add_expansion(&self, rhs: &Self) -> Self {
         let components = expansion_sum(self.components(), rhs.components());
+        let result = Self::from_components(components);
+        debug_assert!(result.check_invariants().is_ok());
+        result
+    }
+
+    /// Multiplies another adaptive precision value, returning the product.
+    pub fn mul_expansion(&self, rhs: &Self) -> Self {
+        let components = expansion_product(self.components(), rhs.components());
         let result = Self::from_components(components);
         debug_assert!(result.check_invariants().is_ok());
         result
@@ -129,6 +139,42 @@ impl AddAssign for Ap64 {
 impl AddAssign<&Ap64> for Ap64 {
     fn add_assign(&mut self, rhs: &Ap64) {
         *self = (&*self).add(rhs);
+    }
+}
+
+impl<'a, 'b> Mul<&'b Ap64> for &'a Ap64 {
+    type Output = Ap64;
+
+    fn mul(self, rhs: &'b Ap64) -> Ap64 {
+        self.mul_expansion(rhs)
+    }
+}
+
+impl Mul for Ap64 {
+    type Output = Ap64;
+
+    fn mul(self, rhs: Ap64) -> Ap64 {
+        (&self).mul(&rhs)
+    }
+}
+
+impl Mul<&Ap64> for Ap64 {
+    type Output = Ap64;
+
+    fn mul(self, rhs: &Ap64) -> Ap64 {
+        (&self).mul(rhs)
+    }
+}
+
+impl MulAssign for Ap64 {
+    fn mul_assign(&mut self, rhs: Self) {
+        *self = (&*self).mul(&rhs);
+    }
+}
+
+impl MulAssign<&Ap64> for Ap64 {
+    fn mul_assign(&mut self, rhs: &Ap64) {
+        *self = (&*self).mul(rhs);
     }
 }
 

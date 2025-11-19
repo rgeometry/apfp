@@ -2,7 +2,6 @@
 //! statically-derived error bound and an exact fallback.
 
 // Public modules
-pub mod ast;
 pub mod ast_static;
 
 use crate::geometry::{Coord, GeometryPredicateResult};

@@ -170,80 +170,105 @@
 
       # Package that generates assembly output for human inspection
       # Build using craneLib which handles vendoring, then extract assembly
-      cargoAsmOutput =
-        craneLib.mkCargoDerivation {
+      cargoAsmOutput = let
+        # Build the package first
+        builtPackage = craneLib.buildPackage {
           inherit src pname version cargoArtifacts;
+          nativeBuildInputs = [toolchain];
+        };
+      in
+        pkgs.runCommand "cargo-asm-output" {
           nativeBuildInputs = [
             toolchain
             cargoAsmTool
           ];
-          cargoVendorDir = craneLib.vendorCargoDeps {
-            inherit src cargoArtifacts;
-          };
-          buildPhaseCargoCommand = ''
-            cargo build --release --lib
-          '';
-          doCheck = false;
-        }
-        // {
-          # Override installPhase to generate assembly files instead
-          installPhase = ''
-              set -euo pipefail
+          builtPackage = builtPackage;
+          meta.description = "Assembly output for critical functions (for inspection)";
+        } ''
+          set -euo pipefail
 
-              # Create output directory
-              mkdir -p $out
+          # Copy source
+          cp -r ${src}/* .
+          chmod -R +w .
 
-              # Generate assembly output for each function and save to files
-              for func in ${pkgs.lib.concatStringsSep " " (map pkgs.lib.escapeShellArg asmFunctions)}; do
-                echo "Generating assembly for function: $func"
+          # Extract the built target directory from the package
+          mkdir -p target
+          if [ -f "${builtPackage}/target.tar.zst" ]; then
+            echo "Extracting target directory from built package..."
+            tar -xf ${builtPackage}/target.tar.zst -C target --strip-components=1 || {
+              zstd -dc ${builtPackage}/target.tar.zst | tar -x -C target --strip-components=1 || true
+            }
+          fi
 
-                # Convert function name to filename (replace :: with _)
-                filename=$(echo "$func" | sed 's/::/_/g')
+          # Set up vendored dependencies
+          vendorDir=${craneLib.vendorCargoDeps {inherit src cargoArtifacts;}}
+          cp -r $vendorDir vendor
 
-              # Generate assembly output (using native target, not ${asmTarget})
-              cargo asm --release --lib "$func" > "$out/$filename.s" 2>&1 || {
-                echo "Warning: Failed to generate assembly for $func, saving error output"
-                cargo asm --release --lib "$func" > "$out/$filename.s" 2>&1 || true
-              }
+          # Configure cargo to use vendored sources
+          mkdir -p .cargo
+          cat > .cargo/config.toml <<EOF
+          [source.crates-io]
+          replace-with = "vendored-sources"
 
-                echo "Saved assembly to $out/$filename.s"
-              done
+          [source.vendored-sources]
+          directory = "$(pwd)/vendor"
+          EOF
 
-              # Create a README with information about the assembly files
-              cat > $out/README.md <<EOF
-              # Assembly Output
+          export CARGO_TARGET_DIR=$PWD/target
 
-            This directory contains the generated assembly code for critical functions.
+          # Create output directory
+          mkdir -p $out
 
-            Target: native (built for the current platform)
-            Build mode: release
+          # Generate assembly output for each function and save to files
+          for func in ${pkgs.lib.concatStringsSep " " (map pkgs.lib.escapeShellArg asmFunctions)}; do
+            echo "Generating assembly for function: $func"
 
-            Note: For consistent cross-platform assembly, see the cargoAsmCheck which uses ${asmTarget}
+            # Convert function name to filename (replace :: with _)
+            filename=$(echo "$func" | sed 's/::/_/g')
 
-              Functions:
-              ${pkgs.lib.concatMapStringsSep "\n" (f: "- \`${f}\`") asmFunctions}
+            # Generate assembly output (using native target, offline mode)
+            cargo asm --release --lib "$func" --offline > "$out/$filename.s" 2>&1 || {
+              echo "Warning: Failed to generate assembly for $func, saving error output"
+              cargo asm --release --lib "$func" --offline > "$out/$filename.s" 2>&1 || true
+            }
 
-              ## Files
+            echo "Saved assembly to $out/$filename.s"
+          done
 
-              ${pkgs.lib.concatMapStringsSep "\n" (f: "- \`$(echo ${f} | sed 's/::/_/g').s\` - Assembly for \`${f}\`") asmFunctions}
+          # Create a README with information about the assembly files
+          cat > $out/README.md <<EOF
+          # Assembly Output
 
-              ## Viewing the Assembly
+          This directory contains the generated assembly code for critical functions.
 
-              You can view these files with any text editor or use:
-              \`\`\`bash
-              cat \$out/*.s
-              \`\`\`
+          Target: native (built for the current platform)
+          Build mode: release
 
-              Or navigate to the package output:
-              \`\`\`bash
-              nix build .#cargoAsmOutput
-              cat result/*.s
-              \`\`\`
-              EOF
+          Note: For consistent cross-platform assembly, see the cargoAsmCheck which uses ${asmTarget}
 
-              echo "Assembly output generated in $out"
-          '';
-        };
+          Functions:
+          ${pkgs.lib.concatMapStringsSep "\n" (f: "- \`${f}\`") asmFunctions}
+
+          ## Files
+
+          ${pkgs.lib.concatMapStringsSep "\n" (f: "- \`$(echo ${f} | sed 's/::/_/g').s\` - Assembly for \`${f}\`") asmFunctions}
+
+          ## Viewing the Assembly
+
+          You can view these files with any text editor or use:
+          \`\`\`bash
+          cat \$out/*.s
+          \`\`\`
+
+          Or navigate to the package output:
+          \`\`\`bash
+          nix build .#cargoAsmOutput
+          cat result/*.s
+          \`\`\`
+          EOF
+
+          echo "Assembly output generated in $out"
+        '';
     in {
       packages.default = package;
       packages.cargoAsmOutput = cargoAsmOutput;

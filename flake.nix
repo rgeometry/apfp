@@ -273,10 +273,6 @@
 
           echo "Checking assembly files from cargoAsmOutput..."
 
-          # Make scripts executable
-          chmod +x "$checkNoAssertions"
-          chmod +x "$checkNoAllocations"
-
           for asm_file in ${cargoAsmOutput}/*.s; do
             if [ ! -f "$asm_file" ]; then
               echo "ERROR: No assembly files found in ${cargoAsmOutput}"

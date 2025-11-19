@@ -106,70 +106,9 @@
       # Use cargo-show-asm from nixpkgs, which provides the cargo-asm program
       cargoAsmTool = pkgs.cargo-show-asm;
 
-      cargoAsmCheck =
-        pkgs.runCommand "cargo-asm-check" {
-          nativeBuildInputs = [
-            toolchain
-            cargoAsmTool
-          ];
-        } ''
-          set -euo pipefail
-
-          # Copy source
-          cp -r ${src}/* .
-          chmod -R +w .
-
-          export CARGO_TARGET_DIR=$PWD/target
-
-          # Copy vendored dependencies from cargoArtifacts to avoid network access
-          if [ -d "${cargoArtifacts}" ]; then
-            mkdir -p target
-            cp -r ${cargoArtifacts}/target/* target/ 2>/dev/null || true
-          fi
-
-          # Build the library in release mode for the pinned target
-          echo "Building for target ${asmTarget}..."
-          cargo build --release --target ${asmTarget} --lib
-
-          # Patterns that indicate assertions (panic, assert, etc.)
-          ASSERT_PATTERNS="panic|assert|__rust_start_panic|rust_begin_unwind"
-
-          # Patterns that indicate memory allocations
-          ALLOC_PATTERNS="__rust_alloc|__rust_realloc|__rust_dealloc|malloc|calloc|realloc|alloc::alloc"
-
-          for func in ${pkgs.lib.concatStringsSep " " (map pkgs.lib.escapeShellArg asmFunctions)}; do
-            echo "Checking assembly for function: $func"
-
-            # Generate assembly output
-            asm_output=$(cargo asm --release --target ${asmTarget} --lib "$func" 2>&1 || true)
-
-            if [ -z "$asm_output" ]; then
-              echo "ERROR: Failed to generate assembly for $func"
-              exit 1
-            fi
-
-            # Check for assertions
-            if echo "$asm_output" | grep -qiE "$ASSERT_PATTERNS"; then
-              echo "ERROR: Function $func contains assertions in assembly:"
-              echo "$asm_output" | grep -iE "$ASSERT_PATTERNS"
-              exit 1
-            fi
-
-            # Check for memory allocations
-            if echo "$asm_output" | grep -qiE "$ALLOC_PATTERNS"; then
-              echo "ERROR: Function $func contains memory allocations in assembly:"
-              echo "$asm_output" | grep -iE "$ALLOC_PATTERNS"
-              exit 1
-            fi
-
-            echo "✓ Function $func passed checks (no assertions, no allocations)"
-          done
-
-          touch $out
-        '';
-
       # Package that generates assembly output for human inspection
       # Build using craneLib which handles vendoring, then extract assembly
+      # Always targets aarch64-unknown-linux-gnu for consistency
       cargoAsmOutput = let
         # Build the package first
         builtPackage = craneLib.buildPackage {
@@ -218,6 +157,10 @@
 
           export CARGO_TARGET_DIR=$PWD/target
 
+          # Build the library in release mode for the pinned target
+          echo "Building for target ${asmTarget}..."
+          cargo build --release --target ${asmTarget} --lib --offline
+
           # Create output directory
           mkdir -p $out
 
@@ -228,12 +171,12 @@
             # Convert function name to filename (replace :: with _)
             filename=$(echo "$func" | sed 's/::/_/g')
 
-            # Generate assembly output (using native target, offline mode)
+            # Generate assembly output (using pinned target, offline mode)
             # Build messages go to stderr, assembly goes to stdout - keep them separate
-            cargo asm --release --lib "$func" --offline > "$out/$filename.s" 2>/dev/null || {
+            cargo asm --release --target ${asmTarget} --lib "$func" --offline > "$out/$filename.s" 2>/dev/null || {
               echo "Warning: Failed to generate assembly for $func"
               # Capture error output for debugging
-              cargo asm --release --lib "$func" --offline > "$out/$filename.s.error" 2>&1 || true
+              cargo asm --release --target ${asmTarget} --lib "$func" --offline > "$out/$filename.s.error" 2>&1 || true
             }
 
             echo "Saved assembly to $out/$filename.s"
@@ -245,10 +188,8 @@
 
           This directory contains the generated assembly code for critical functions.
 
-          Target: native (built for the current platform)
+          Target: ${asmTarget}
           Build mode: release
-
-          Note: For consistent cross-platform assembly, see the cargoAsmCheck which uses ${asmTarget}
 
           Functions:
           ${pkgs.lib.concatMapStringsSep "\n" (f: "- \`${f}\`") asmFunctions}
@@ -272,6 +213,84 @@
           EOF
 
           echo "Assembly output generated in $out"
+        '';
+
+      # Check that assembly files contain no assertions or allocations
+      # Uses the output from cargoAsmOutput
+      cargoAsmCheck =
+        pkgs.runCommand "cargo-asm-check" {
+          nativeBuildInputs = [pkgs.bash];
+          # Use the output from cargoAsmOutput
+          asmOutput = cargoAsmOutput;
+          # Include the check scripts as derivations
+          checkNoAssertions = pkgs.writeShellScript "check-no-assertions.sh" ''
+            #!${pkgs.bash}/bin/bash
+            set -euo pipefail
+            if [ $# -ne 1 ]; then
+              echo "Usage: $0 <assembly-file.s>"
+              exit 1
+            fi
+            asm_file="$1"
+            if [ ! -f "$asm_file" ]; then
+              echo "ERROR: File not found: $asm_file"
+              exit 1
+            fi
+            ASSERT_PATTERNS="panic|assert|__rust_start_panic|rust_begin_unwind"
+            if grep -qiE "$ASSERT_PATTERNS" "$asm_file"; then
+              echo "ERROR: Assembly file contains assertions:"
+              grep -iE "$ASSERT_PATTERNS" "$asm_file"
+              exit 1
+            fi
+            echo "✓ No assertions found in $asm_file"
+          '';
+          checkNoAllocations = pkgs.writeShellScript "check-no-allocations.sh" ''
+            #!${pkgs.bash}/bin/bash
+            set -euo pipefail
+            if [ $# -ne 1 ]; then
+              echo "Usage: $0 <assembly-file.s>"
+              exit 1
+            fi
+            asm_file="$1"
+            if [ ! -f "$asm_file" ]; then
+              echo "ERROR: File not found: $asm_file"
+              exit 1
+            fi
+            ALLOC_PATTERNS="__rust_alloc|__rust_realloc|__rust_dealloc|malloc|calloc|realloc|alloc::alloc"
+            if grep -qiE "$ALLOC_PATTERNS" "$asm_file"; then
+              echo "ERROR: Assembly file contains memory allocations:"
+              grep -iE "$ALLOC_PATTERNS" "$asm_file"
+              exit 1
+            fi
+            echo "✓ No memory allocations found in $asm_file"
+          '';
+        } ''
+          set -euo pipefail
+
+          echo "Checking assembly files from cargoAsmOutput..."
+
+          # Make scripts executable
+          chmod +x "$checkNoAssertions"
+          chmod +x "$checkNoAllocations"
+
+          for asm_file in ${cargoAsmOutput}/*.s; do
+            if [ ! -f "$asm_file" ]; then
+              echo "ERROR: No assembly files found in ${cargoAsmOutput}"
+              exit 1
+            fi
+
+            filename=$(basename "$asm_file")
+            echo "Checking $filename..."
+
+            # Run assertion check
+            "$checkNoAssertions" "$asm_file"
+
+            # Run allocation check
+            "$checkNoAllocations" "$asm_file"
+
+            echo "✓ $filename passed all checks"
+          done
+
+          touch $out
         '';
     in {
       packages.default = package;

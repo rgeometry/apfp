@@ -181,65 +181,67 @@
             inherit src cargoArtifacts;
           };
           buildPhaseCargoCommand = ''
-            cargo build --release --target ${asmTarget} --lib
+            cargo build --release --lib
           '';
           doCheck = false;
         }
         // {
           # Override installPhase to generate assembly files instead
           installPhase = ''
-            set -euo pipefail
+              set -euo pipefail
 
-            # Create output directory
-            mkdir -p $out
+              # Create output directory
+              mkdir -p $out
 
-            # Generate assembly output for each function and save to files
-            for func in ${pkgs.lib.concatStringsSep " " (map pkgs.lib.escapeShellArg asmFunctions)}; do
-              echo "Generating assembly for function: $func"
+              # Generate assembly output for each function and save to files
+              for func in ${pkgs.lib.concatStringsSep " " (map pkgs.lib.escapeShellArg asmFunctions)}; do
+                echo "Generating assembly for function: $func"
 
-              # Convert function name to filename (replace :: with _)
-              filename=$(echo "$func" | sed 's/::/_/g')
+                # Convert function name to filename (replace :: with _)
+                filename=$(echo "$func" | sed 's/::/_/g')
 
-              # Generate assembly output
-              cargo asm --release --target ${asmTarget} --lib "$func" > "$out/$filename.s" 2>&1 || {
+              # Generate assembly output (using native target, not ${asmTarget})
+              cargo asm --release --lib "$func" > "$out/$filename.s" 2>&1 || {
                 echo "Warning: Failed to generate assembly for $func, saving error output"
-                cargo asm --release --target ${asmTarget} --lib "$func" > "$out/$filename.s" 2>&1 || true
+                cargo asm --release --lib "$func" > "$out/$filename.s" 2>&1 || true
               }
 
-              echo "Saved assembly to $out/$filename.s"
-            done
+                echo "Saved assembly to $out/$filename.s"
+              done
 
-            # Create a README with information about the assembly files
-            cat > $out/README.md <<EOF
-            # Assembly Output
+              # Create a README with information about the assembly files
+              cat > $out/README.md <<EOF
+              # Assembly Output
 
             This directory contains the generated assembly code for critical functions.
 
-            Target: ${asmTarget}
+            Target: native (built for the current platform)
             Build mode: release
 
-            Functions:
-            ${pkgs.lib.concatMapStringsSep "\n" (f: "- \`${f}\`") asmFunctions}
+            Note: For consistent cross-platform assembly, see the cargoAsmCheck which uses ${asmTarget}
 
-            ## Files
+              Functions:
+              ${pkgs.lib.concatMapStringsSep "\n" (f: "- \`${f}\`") asmFunctions}
 
-            ${pkgs.lib.concatMapStringsSep "\n" (f: "- \`$(echo ${f} | sed 's/::/_/g').s\` - Assembly for \`${f}\`") asmFunctions}
+              ## Files
 
-            ## Viewing the Assembly
+              ${pkgs.lib.concatMapStringsSep "\n" (f: "- \`$(echo ${f} | sed 's/::/_/g').s\` - Assembly for \`${f}\`") asmFunctions}
 
-            You can view these files with any text editor or use:
-            \`\`\`bash
-            cat \$out/*.s
-            \`\`\`
+              ## Viewing the Assembly
 
-            Or navigate to the package output:
-            \`\`\`bash
-            nix build .#cargoAsmOutput
-            cat result/*.s
-            \`\`\`
-            EOF
+              You can view these files with any text editor or use:
+              \`\`\`bash
+              cat \$out/*.s
+              \`\`\`
 
-            echo "Assembly output generated in $out"
+              Or navigate to the package output:
+              \`\`\`bash
+              nix build .#cargoAsmOutput
+              cat result/*.s
+              \`\`\`
+              EOF
+
+              echo "Assembly output generated in $out"
           '';
         };
     in {

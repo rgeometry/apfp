@@ -31,8 +31,7 @@
       craneLib = crane.mkLib pkgs;
       src = craneLib.cleanCargoSource (craneLib.path ./.);
       crateInfo = craneLib.crateNameFromCargoToml {cargoToml = ./Cargo.toml;};
-      pname = crateInfo.pname;
-      version = crateInfo.version;
+      inherit (crateInfo) pname version;
 
       toolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
 
@@ -102,13 +101,12 @@
           # Check formatting with alejandra
           echo "Checking formatting: flake.nix"
           alejandra --check "$flakeNix"
-          # Check with statix for style and best practices
-          # Note: statix will report warnings but we continue (warnings are informational)
-          statix check "$flakeNix" || true
+          # Check with statix for style and best practices (warnings are treated as failures)
+          statix check "$flakeNix"
           touch $out
         '';
 
-      # Check all shell scripts with shellcheck (only fail on errors, not warnings/info)
+      # Check all shell scripts with shellcheck (warnings are treated as failures)
       shellcheckCheck =
         pkgs.runCommand "shellcheck-check" {
           nativeBuildInputs = [pkgs.shellcheck];
@@ -118,11 +116,11 @@
         } ''
           set -euo pipefail
           echo "Checking: nix/check-no-assertions.sh"
-          shellcheck -S error "$checkNoAssertions"
+          shellcheck "$checkNoAssertions"
           echo "Checking: nix/check-no-allocations.sh"
-          shellcheck -S error "$checkNoAllocations"
+          shellcheck "$checkNoAllocations"
           echo "Checking: nix/asm-check-table.sh"
-          shellcheck -S error "$asmCheckTable"
+          shellcheck "$asmCheckTable"
           touch $out
         '';
 
@@ -160,7 +158,7 @@
             toolchainWithTarget
             cargoAsmTool
           ];
-          builtPackage = builtPackage;
+          inherit builtPackage;
           meta.description = "Assembly output for critical functions (for inspection)";
         } ''
           set -euo pipefail
@@ -311,9 +309,10 @@
         '';
       };
     in {
-      packages.default = package;
-      packages.cargoAsmOutput = cargoAsmOutput;
-      packages.cargoAsmTool = cargoAsmTool;
+      packages = {
+        default = package;
+        inherit cargoAsmOutput cargoAsmTool;
+      };
 
       checks = {
         fmt = fmtCheck;

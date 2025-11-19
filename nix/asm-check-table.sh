@@ -4,18 +4,13 @@
 set -euo pipefail
 
 # Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
 RED_BG='\033[41m'
 GREEN_BG='\033[42m'
-YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 BOLD='\033[1m'
 
 # Unicode symbols
-PASS="✓"
-FAIL="✗"
 SEP_VERT="│"
 SEP_HORIZ="─"
 SEP_CROSS="┼"
@@ -68,7 +63,7 @@ if [ ${#FUNCTION_NAMES[@]} -gt 0 ]; then
   # Use provided function names and map to filenames
   for func in "${FUNCTION_NAMES[@]}"; do
     # Convert function name to filename: apfp::analysis::ast_static::orient2d_fast -> apfp_analysis_ast_static_orient2d_fast
-    filename=$(echo "$func" | sed 's/::/_/g')
+    filename="${func//::/_}"
     if [ -f "$ASM_DIR/$filename.s" ]; then
       FUNCTIONS+=("$func")
       FUNC_TO_FILE["$func"]="$filename.s"
@@ -80,7 +75,7 @@ else
     if [ -f "$asm_file" ]; then
       filename=$(basename "$asm_file" .s)
       # Convert filename back to function name (replace _ with ::)
-      func_name=$(echo "$filename" | sed 's/_/::/g')
+      func_name="${filename//_/::}"
       FUNCTIONS+=("$func_name")
       FUNC_TO_FILE["$func_name"]="$(basename "$asm_file")"
     fi
@@ -88,8 +83,7 @@ else
 fi
 
 # Sort functions for consistent output
-IFS=$'\n' FUNCTIONS=($(sort <<<"${FUNCTIONS[*]}"))
-unset IFS
+mapfile -t FUNCTIONS < <(printf '%s\n' "${FUNCTIONS[@]}" | sort)
 
 # Group functions by module prefix (everything before the last ::)
 declare -A MODULE_GROUPS
@@ -155,7 +149,7 @@ for func in "${FUNCTIONS[@]}"; do
     if [ $func_len -gt $max_func_len ]; then
       max_func_len=$func_len
     fi
-    if [ $module_len -gt $max_module_len ]; then
+    if [ "$module_len" -gt "$max_module_len" ]; then
       max_module_len=$module_len
     fi
   else
@@ -181,43 +175,43 @@ echo -e "${BOLD}${BLUE}Assembly Check Results${NC}"
 echo ""
 
 # Top border
-printf "${SEP_TOP_LEFT}"
+printf '%s' "${SEP_TOP_LEFT}"
 printf "%*s" $func_col_width | tr ' ' "${SEP_HORIZ}"
 for check_entry in "${CHECK_SCRIPTS[@]}"; do
   IFS=':' read -r script_name check_label <<< "$check_entry"
-  printf "${SEP_TOP_T}"
+  printf '%s' "${SEP_TOP_T}"
   printf "%*s" $check_col_width | tr ' ' "${SEP_HORIZ}"
 done
-printf "${SEP_TOP_RIGHT}\n"
+printf '%s\n' "${SEP_TOP_RIGHT}"
 
 # Header row
-printf "${SEP_VERT}${BOLD}%-*s${NC}" $func_col_width "Function"
+printf '%s%s%-*s%s' "${SEP_VERT}" "${BOLD}" $func_col_width "Function" "${NC}"
 for check_entry in "${CHECK_SCRIPTS[@]}"; do
   IFS=':' read -r script_name check_label <<< "$check_entry"
-  printf "${SEP_VERT}${BOLD}%-*s${NC}" $check_col_width "$check_label"
+  printf '%s%s%-*s%s' "${SEP_VERT}" "${BOLD}" $check_col_width "$check_label" "${NC}"
 done
-printf "${SEP_VERT}\n"
+printf '%s\n' "${SEP_VERT}"
 
 # Separator
-printf "${SEP_LEFT_T}"
+printf '%s' "${SEP_LEFT_T}"
 printf "%*s" $func_col_width | tr ' ' "${SEP_HORIZ}"
 for check_entry in "${CHECK_SCRIPTS[@]}"; do
-  printf "${SEP_CROSS}"
+  printf '%s' "${SEP_CROSS}"
   printf "%*s" $check_col_width | tr ' ' "${SEP_HORIZ}"
 done
-printf "${SEP_RIGHT_T}\n"
+printf '%s\n' "${SEP_RIGHT_T}"
 
 # Data rows - grouped by module
 for module in $(printf '%s\n' "${!MODULE_GROUPS[@]}" | sort); do
-  funcs_in_module=($(printf '%s' "${MODULE_GROUPS[$module]}" | grep -v '^$' | sort))
+  mapfile -t funcs_in_module < <(printf '%s' "${MODULE_GROUPS[$module]}" | grep -v '^$' | sort)
   
   # Print module header row if there's a module prefix
   if [ -n "$module" ]; then
-    printf "${SEP_VERT}${BOLD}${BLUE}%-*s${NC}" $func_col_width "$module::"
+    printf '%s%s%s%-*s%s' "${SEP_VERT}" "${BOLD}" "${BLUE}" $func_col_width "$module::" "${NC}"
     for check_entry in "${CHECK_SCRIPTS[@]}"; do
-      printf "${SEP_VERT}%*s" $check_col_width ""
+      printf '%s%*s' "${SEP_VERT}" $check_col_width ""
     done
-    printf "${SEP_VERT}\n"
+    printf '%s\n' "${SEP_VERT}"
   fi
   
   # Print function rows
@@ -232,7 +226,7 @@ for module in $(printf '%s\n' "${!MODULE_GROUPS[@]}" | sort); do
     # Display just the function name
     display_name="$func"
     
-    printf "${SEP_VERT}  %-*s" $((func_col_width - 2)) "$display_name"
+    printf '%s  %-*s' "${SEP_VERT}" $((func_col_width - 2)) "$display_name"
     
     check_idx=0
     for check_entry in "${CHECK_SCRIPTS[@]}"; do
@@ -241,26 +235,26 @@ for module in $(printf '%s\n' "${!MODULE_GROUPS[@]}" | sort); do
       
       if [ "$result" = "PASS" ]; then
         # Green background for entire cell - fixed width
-        printf "${SEP_VERT}${GREEN_BG}%*s${NC}" $check_col_width ""
+        printf '%s%s%*s%s' "${SEP_VERT}" "${GREEN_BG}" $check_col_width "" "${NC}"
       else
         # Red background for entire cell - fixed width
-        printf "${SEP_VERT}${RED_BG}%*s${NC}" $check_col_width ""
+        printf '%s%s%*s%s' "${SEP_VERT}" "${RED_BG}" $check_col_width "" "${NC}"
       fi
       
       ((check_idx++)) || true
     done
     
-    printf "${SEP_VERT}\n"
+    printf '%s\n' "${SEP_VERT}"
   done
 done
 
 # Bottom border
-printf "${SEP_BOTTOM_LEFT}"
+printf '%s' "${SEP_BOTTOM_LEFT}"
 printf "%*s" $func_col_width | tr ' ' "${SEP_HORIZ}"
 for check_entry in "${CHECK_SCRIPTS[@]}"; do
-  printf "${SEP_BOTTOM_T}"
+  printf '%s' "${SEP_BOTTOM_T}"
   printf "%*s" $check_col_width | tr ' ' "${SEP_HORIZ}"
 done
-printf "${SEP_BOTTOM_RIGHT}\n"
+printf '%s\n' "${SEP_BOTTOM_RIGHT}"
 
 echo ""

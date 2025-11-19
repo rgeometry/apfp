@@ -36,6 +36,11 @@
 
       toolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
 
+      # Toolchain with target support for cross-compilation
+      toolchainWithTarget = toolchain.override {
+        targets = [asmTarget];
+      };
+
       cargoArtifacts = craneLib.buildDepsOnly {
         inherit src pname version;
         nativeBuildInputs = [toolchain];
@@ -118,7 +123,7 @@
       in
         pkgs.runCommand "cargo-asm-output" {
           nativeBuildInputs = [
-            toolchain
+            toolchainWithTarget
             cargoAsmTool
           ];
           builtPackage = builtPackage;

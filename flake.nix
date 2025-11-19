@@ -91,36 +91,80 @@
           touch $out
         '';
 
+      # Source for linting (full repository, not filtered)
+      # Use builtins.path to get the full source without filtering
+      lintSrc = builtins.path {
+        path = ./.;
+        filter = path: type: let
+          baseName = baseNameOf path;
+        in
+          baseName
+          != ".git"
+          && baseName != "result"
+          && baseName != "target"
+          && baseName != ".direnv";
+      };
+
       # Check all Nix files with alejandra and statix
       nixLintCheck =
         pkgs.runCommand "nix-lint-check" {
-          nativeBuildInputs = [pkgs.alejandra pkgs.statix];
-          flakeNix = ./flake.nix;
+          nativeBuildInputs = [pkgs.alejandra pkgs.statix pkgs.findutils];
+          inherit lintSrc;
         } ''
           set -euo pipefail
-          # Check formatting with alejandra
-          echo "Checking formatting: flake.nix"
-          alejandra --check "$flakeNix"
+          # Find all .nix files, excluding common build/dependency directories
+          nix_files=$(find "$lintSrc" -name "*.nix" -type f \
+            ! -path "*/result/*" \
+            ! -path "*/.git/*" \
+            ! -path "*/target/*" \
+            ! -path "*/.direnv/*" \
+            | sort)
+
+          if [ -z "$nix_files" ]; then
+            echo "No .nix files found to lint"
+            exit 1
+          fi
+
+          echo "Found $(echo "$nix_files" | wc -l) .nix file(s) to check"
+
+          # Check formatting with alejandra for each file
+          echo "$nix_files" | while read -r nix_file; do
+            echo "Checking formatting: $nix_file"
+            alejandra --check "$nix_file"
+          done
+
           # Check with statix for style and best practices (warnings are treated as failures)
-          statix check "$flakeNix"
+          statix check "$lintSrc"
           touch $out
         '';
 
       # Check all shell scripts with shellcheck (warnings are treated as failures)
       shellcheckCheck =
         pkgs.runCommand "shellcheck-check" {
-          nativeBuildInputs = [pkgs.shellcheck];
-          checkNoAssertions = ./nix/check-no-assertions.sh;
-          checkNoAllocations = ./nix/check-no-allocations.sh;
-          asmCheckTable = ./nix/asm-check-table.sh;
+          nativeBuildInputs = [pkgs.shellcheck pkgs.findutils];
+          inherit lintSrc;
         } ''
           set -euo pipefail
-          echo "Checking: nix/check-no-assertions.sh"
-          shellcheck "$checkNoAssertions"
-          echo "Checking: nix/check-no-allocations.sh"
-          shellcheck "$checkNoAllocations"
-          echo "Checking: nix/asm-check-table.sh"
-          shellcheck "$asmCheckTable"
+          # Find all .sh files, excluding common build/dependency directories
+          sh_files=$(find "$lintSrc" -name "*.sh" -type f \
+            ! -path "*/result/*" \
+            ! -path "*/.git/*" \
+            ! -path "*/target/*" \
+            ! -path "*/.direnv/*" \
+            | sort)
+
+          if [ -z "$sh_files" ]; then
+            echo "No .sh files found to lint"
+            exit 1
+          fi
+
+          echo "Found $(echo "$sh_files" | wc -l) .sh file(s) to check"
+
+          # Check each shell script
+          echo "$sh_files" | while read -r sh_file; do
+            echo "Checking: $sh_file"
+            shellcheck "$sh_file"
+          done
           touch $out
         '';
 

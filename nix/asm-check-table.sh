@@ -6,6 +6,8 @@ set -euo pipefail
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
+RED_BG='\033[41m'
+GREEN_BG='\033[42m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
@@ -238,9 +240,11 @@ for module in $(printf '%s\n' "${!MODULE_GROUPS[@]}" | sort); do
       result="${RESULTS["$full_func:$check_idx"]:-UNKNOWN}"
       
       if [ "$result" = "PASS" ]; then
-        printf "${SEP_VERT}${GREEN}%s${NC}%*s" "$PASS" $((check_col_width - 1)) ""
+        # Green background for entire cell - fixed width
+        printf "${SEP_VERT}${GREEN_BG}%*s${NC}" $check_col_width ""
       else
-        printf "${SEP_VERT}${RED}%s${NC}%*s" "$FAIL" $((check_col_width - 1)) ""
+        # Red background for entire cell - fixed width
+        printf "${SEP_VERT}${RED_BG}%*s${NC}" $check_col_width ""
       fi
       
       ((check_idx++)) || true

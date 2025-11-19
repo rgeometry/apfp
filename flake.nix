@@ -220,54 +220,17 @@
           echo "Assembly output generated in $out"
         '';
 
-      # Check that assembly files contain no assertions or allocations
-      # Uses the output from cargoAsmOutput
+      # Check scripts are in the nix/ folder
+      checkNoAssertionsScript = ./nix/check-no-assertions.sh;
+      checkNoAllocationsScript = ./nix/check-no-allocations.sh;
+
       cargoAsmCheck =
         pkgs.runCommand "cargo-asm-check" {
           nativeBuildInputs = [pkgs.bash];
           # Use the output from cargoAsmOutput
           asmOutput = cargoAsmOutput;
-          # Include the check scripts as derivations
-          checkNoAssertions = pkgs.writeShellScript "check-no-assertions.sh" ''
-            #!${pkgs.bash}/bin/bash
-            set -euo pipefail
-            if [ $# -ne 1 ]; then
-              echo "Usage: $0 <assembly-file.s>"
-              exit 1
-            fi
-            asm_file="$1"
-            if [ ! -f "$asm_file" ]; then
-              echo "ERROR: File not found: $asm_file"
-              exit 1
-            fi
-            ASSERT_PATTERNS="panic|assert|__rust_start_panic|rust_begin_unwind"
-            if grep -qiE "$ASSERT_PATTERNS" "$asm_file"; then
-              echo "ERROR: Assembly file contains assertions:"
-              grep -iE "$ASSERT_PATTERNS" "$asm_file"
-              exit 1
-            fi
-            echo "✓ No assertions found in $asm_file"
-          '';
-          checkNoAllocations = pkgs.writeShellScript "check-no-allocations.sh" ''
-            #!${pkgs.bash}/bin/bash
-            set -euo pipefail
-            if [ $# -ne 1 ]; then
-              echo "Usage: $0 <assembly-file.s>"
-              exit 1
-            fi
-            asm_file="$1"
-            if [ ! -f "$asm_file" ]; then
-              echo "ERROR: File not found: $asm_file"
-              exit 1
-            fi
-            ALLOC_PATTERNS="__rust_alloc|__rust_realloc|__rust_dealloc|malloc|calloc|realloc|alloc::alloc"
-            if grep -qiE "$ALLOC_PATTERNS" "$asm_file"; then
-              echo "ERROR: Assembly file contains memory allocations:"
-              grep -iE "$ALLOC_PATTERNS" "$asm_file"
-              exit 1
-            fi
-            echo "✓ No memory allocations found in $asm_file"
-          '';
+          checkNoAssertions = checkNoAssertionsScript;
+          checkNoAllocations = checkNoAllocationsScript;
         } ''
           set -euo pipefail
 
@@ -293,6 +256,26 @@
 
           touch $out
         '';
+
+      # App to display assembly check results as a table
+      asmCheckTableApp = pkgs.writeShellApplication {
+        name = "asm-check-table";
+        runtimeInputs = [pkgs.bash];
+        text = ''
+          set -euo pipefail
+
+          # Get the assembly output directory
+          asm_output=$(nix build --no-link --print-out-paths '.#cargoAsmOutput' 2>/dev/null || echo "")
+
+          if [ -z "$asm_output" ] || [ ! -d "$asm_output" ]; then
+            echo "Building cargoAsmOutput..."
+            asm_output=$(nix build --print-out-paths '.#cargoAsmOutput' 2>/dev/null)
+          fi
+
+          # Pass function names to the script for proper filename matching
+          ${./nix/asm-check-table.sh} "$asm_output" "${./nix}" ${pkgs.lib.concatStringsSep " " (map pkgs.lib.escapeShellArg asmFunctions)}
+        '';
+      };
     in {
       packages.default = package;
       packages.cargoAsmOutput = cargoAsmOutput;
@@ -331,6 +314,15 @@
         }
         // {
           meta.description = "Format Rust sources, TOML files, and Nix expressions";
+        };
+
+      apps.asmCheckTable =
+        flake-utils.lib.mkApp {
+          drv = asmCheckTableApp;
+          exePath = "/bin/asm-check-table";
+        }
+        // {
+          meta.description = "Display assembly check results as a table";
         };
     });
 }

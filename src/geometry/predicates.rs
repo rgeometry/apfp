@@ -3,6 +3,8 @@ use std::cmp::Ordering;
 
 use super::Coord;
 
+use crate::ap64::range::Range;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GeometryPredicateResult {
     Positive,
@@ -68,6 +70,42 @@ pub fn orient2d(a: &Coord, b: &Coord, c: &Coord) -> GeometryPredicateResult {
     let left = &bax * &cay;
     let right = &bay * &cax;
     GeometryPredicateResult::from_ordering(left.compare(&right))
+}
+
+pub fn orient2d_inexact_baseline(a: &Coord, b: &Coord, c: &Coord) -> GeometryPredicateResult {
+    let ax = a.x;
+    let ay = a.y;
+    let bx = b.x;
+    let by = b.y;
+    let cx = c.x;
+    let cy = c.y;
+
+    let bax = bx - ax;
+    let bay = by - ay;
+    let cax = cx - ax;
+    let cay = cy - ay;
+
+    let left = bax * cay;
+    let right = bay * cax;
+    GeometryPredicateResult::from_ordering(left.total_cmp(&right))
+}
+
+pub fn orient2d_inexact_interval(a: &Coord, b: &Coord, c: &Coord) -> GeometryPredicateResult {
+    let ax = Range::new(a.x, 0.0);
+    let ay = Range::new(a.y, 0.0);
+    let bx = Range::new(b.x, 0.0);
+    let by = Range::new(b.y, 0.0);
+    let cx = Range::new(c.x, 0.0);
+    let cy = Range::new(c.y, 0.0);
+
+    let bax = bx - ax;
+    let bay = by - ay;
+    let cax = cx - ax;
+    let cay = cy - ay;
+
+    let left = bax * cay;
+    let right = bay * cax;
+    GeometryPredicateResult::from_ordering(left.compare(right))
 }
 
 #[inline(always)]

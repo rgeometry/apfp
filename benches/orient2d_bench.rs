@@ -1,4 +1,7 @@
-use apfp::{Coord, GeometryPredicateResult, orient2d, orient2d_fixed};
+use apfp::{
+    Coord, GeometryPredicateResult, orient2d, orient2d_fixed, orient2d_inexact_baseline,
+    orient2d_inexact_interval,
+};
 use criterion::{Criterion, criterion_group, criterion_main};
 use num_rational::BigRational;
 use num_traits::{Signed, Zero};
@@ -10,6 +13,18 @@ const MAG_LIMIT: f64 = 1.0e6;
 fn orient2d_apfp_batch(samples: &[(Coord, Coord, Coord)]) {
     for (a, b, c) in samples {
         black_box(orient2d(a, b, c));
+    }
+}
+
+fn orient2d_inexact_baseline_batch(samples: &[(Coord, Coord, Coord)]) {
+    for (a, b, c) in samples {
+        black_box(orient2d_inexact_baseline(a, b, c));
+    }
+}
+
+fn orient2d_inexact_interval_batch(samples: &[(Coord, Coord, Coord)]) {
+    for (a, b, c) in samples {
+        black_box(orient2d_inexact_interval(a, b, c));
     }
 }
 
@@ -36,6 +51,14 @@ fn bench_orient2d(c: &mut Criterion) {
 
     c.bench_function("orient2d_apfp", |b| {
         b.iter(|| orient2d_apfp_batch(black_box(&samples)))
+    });
+
+    c.bench_function("orient2d_inexact_baseline", |b| {
+        b.iter(|| orient2d_inexact_baseline_batch(black_box(&samples)))
+    });
+
+    c.bench_function("orient2d_inexact_interval", |b| {
+        b.iter(|| orient2d_inexact_interval_batch(black_box(&samples)))
     });
 
     c.bench_function("orient2d_fixed", |b| {

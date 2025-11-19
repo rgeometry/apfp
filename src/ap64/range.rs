@@ -1,7 +1,10 @@
-#![cfg(feature = "short-circuit")]
+#![allow(clippy::needless_lifetimes, dead_code)]
 
 use crate::expansion::{two_product, two_sum};
-use std::ops::{Add, Mul, Neg, Sub};
+use std::{
+    cmp::Ordering,
+    ops::{Add, Mul, Neg, Sub},
+};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Range {
@@ -10,6 +13,23 @@ pub(crate) struct Range {
 }
 
 impl Range {
+    pub fn compare(self, rhs: Self) -> Ordering {
+        let (self_lower, self_upper) = self.bounds();
+        let (rhs_lower, rhs_upper) = rhs.bounds();
+        if self_lower > rhs_upper {
+            return Ordering::Greater;
+        }
+        if self_upper < rhs_lower {
+            return Ordering::Less;
+        }
+        Ordering::Equal
+    }
+
+    pub fn bounds(self) -> (f64, f64) {
+        let Range { center, radius } = self;
+        (center - radius, center + radius)
+    }
+
     pub(crate) fn new(center: f64, radius: f64) -> Self {
         Self {
             center,

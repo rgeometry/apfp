@@ -202,17 +202,19 @@
 
           # Set up vendored dependencies
           vendorDir=${craneLib.vendorCargoDeps {inherit src cargoArtifacts;}}
-          cp -r $vendorDir vendor
 
-          # Configure cargo to use vendored sources
+          # Copy the config.toml which contains the vendor directory path
           mkdir -p .cargo
-          cat > .cargo/config.toml <<EOF
-          [source.crates-io]
-          replace-with = "vendored-sources"
+          cp $vendorDir/config.toml .cargo/config.toml
 
-          [source.vendored-sources]
-          directory = "$(pwd)/vendor"
-          EOF
+          # The config.toml points to a symlink in vendorDir, we need to follow it
+          # and copy the actual vendor registry
+          vendorRegPath=$(readlink -f $vendorDir/* 2>/dev/null | grep vendor-registry | head -1)
+          if [ -n "$vendorRegPath" ] && [ -d "$vendorRegPath" ]; then
+            # Copy the vendor registry directory
+            mkdir -p vendor
+            cp -r $vendorRegPath/* vendor/ 2>/dev/null || true
+          fi
 
           export CARGO_TARGET_DIR=$PWD/target
 

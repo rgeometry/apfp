@@ -9,12 +9,13 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
 
       - uses: DeterminateSystems/nix-installer-action@main
-        with:
-          magic-nix-cache: true
 
       - uses: DeterminateSystems/magic-nix-cache-action@main
 

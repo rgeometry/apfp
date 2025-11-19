@@ -93,6 +93,87 @@
         "advisory-db" = advisory-db;
         nativeBuildInputs = [toolchain];
       };
+
+      # Pinned target for consistent assembly output across platforms
+      asmTarget = "aarch64-unknown-linux-gnu";
+
+      # Functions to check for assembly output
+      asmFunctions = [
+        "apfp::analysis::ast_static::orient2d_fast"
+        "apfp::analysis::ast_static::cmp_dist_fast"
+      ];
+
+      cargoAsmCheck =
+        pkgs.runCommand "cargo-asm-check" {
+          nativeBuildInputs = [
+            toolchain
+          ];
+        } ''
+          set -euo pipefail
+
+          # Copy source
+          cp -r ${src}/* .
+          chmod -R +w .
+
+          # Copy built artifacts if available (for faster rebuilds)
+          if [ -d "${package}/lib" ] || [ -d "${package}/target" ]; then
+            mkdir -p target
+            # Try to reuse artifacts if they exist
+          fi
+
+          export CARGO_TARGET_DIR=$PWD/target
+          export CARGO_HOME=$PWD/.cargo
+
+          # Install cargo-asm
+          echo "Installing cargo-asm..."
+          cargo install --locked --root "$CARGO_HOME" cargo-asm 2>&1 || {
+            echo "Trying git fallback..."
+            cargo install --locked --root "$CARGO_HOME" --git https://github.com/pacak/cargo-asm cargo-asm 2>&1
+          }
+
+          # Add cargo-asm to PATH
+          export PATH="$CARGO_HOME/bin:$PATH"
+
+          # Build the library in release mode for the pinned target
+          echo "Building for target ${asmTarget}..."
+          cargo build --release --target ${asmTarget} --lib
+
+          # Patterns that indicate assertions (panic, assert, etc.)
+          ASSERT_PATTERNS="panic|assert|__rust_start_panic|rust_begin_unwind"
+
+          # Patterns that indicate memory allocations
+          ALLOC_PATTERNS="__rust_alloc|__rust_realloc|__rust_dealloc|malloc|calloc|realloc|alloc::alloc"
+
+          for func in ${pkgs.lib.concatStringsSep " " (map pkgs.lib.escapeShellArg asmFunctions)}; do
+            echo "Checking assembly for function: $func"
+
+            # Generate assembly output
+            asm_output=$(cargo asm --release --target ${asmTarget} --lib "$func" 2>&1 || true)
+
+            if [ -z "$asm_output" ]; then
+              echo "ERROR: Failed to generate assembly for $func"
+              exit 1
+            fi
+
+            # Check for assertions
+            if echo "$asm_output" | grep -qiE "$ASSERT_PATTERNS"; then
+              echo "ERROR: Function $func contains assertions in assembly:"
+              echo "$asm_output" | grep -iE "$ASSERT_PATTERNS"
+              exit 1
+            fi
+
+            # Check for memory allocations
+            if echo "$asm_output" | grep -qiE "$ALLOC_PATTERNS"; then
+              echo "ERROR: Function $func contains memory allocations in assembly:"
+              echo "$asm_output" | grep -iE "$ALLOC_PATTERNS"
+              exit 1
+            fi
+
+            echo "✓ Function $func passed checks (no assertions, no allocations)"
+          done
+
+          touch $out
+        '';
     in {
       packages.default = package;
 
@@ -104,6 +185,7 @@
         "cargo-clippy" = cargoClippyCheck;
         "cargo-nextest" = cargoNextestCheck;
         cargo-audit = cargoAuditCheck;
+        "cargo-asm" = cargoAsmCheck;
         default = package;
       };
 

@@ -92,6 +92,40 @@
           touch $out
         '';
 
+      # Check all Nix files with alejandra and statix
+      nixLintCheck =
+        pkgs.runCommand "nix-lint-check" {
+          nativeBuildInputs = [pkgs.alejandra pkgs.statix];
+          flakeNix = ./flake.nix;
+        } ''
+          set -euo pipefail
+          # Check formatting with alejandra
+          echo "Checking formatting: flake.nix"
+          alejandra --check "$flakeNix"
+          # Check with statix for style and best practices
+          # Note: statix will report warnings but we continue (warnings are informational)
+          statix check "$flakeNix" || true
+          touch $out
+        '';
+
+      # Check all shell scripts with shellcheck (only fail on errors, not warnings/info)
+      shellcheckCheck =
+        pkgs.runCommand "shellcheck-check" {
+          nativeBuildInputs = [pkgs.shellcheck];
+          checkNoAssertions = ./nix/check-no-assertions.sh;
+          checkNoAllocations = ./nix/check-no-allocations.sh;
+          asmCheckTable = ./nix/asm-check-table.sh;
+        } ''
+          set -euo pipefail
+          echo "Checking: nix/check-no-assertions.sh"
+          shellcheck -S error "$checkNoAssertions"
+          echo "Checking: nix/check-no-allocations.sh"
+          shellcheck -S error "$checkNoAllocations"
+          echo "Checking: nix/asm-check-table.sh"
+          shellcheck -S error "$asmCheckTable"
+          touch $out
+        '';
+
       cargoAuditCheck = craneLib.cargoAudit {
         inherit src pname version;
 
@@ -283,6 +317,8 @@
 
       checks = {
         fmt = fmtCheck;
+        "nix-lint" = nixLintCheck;
+        "shellcheck" = shellcheckCheck;
         "cargo-fmt" = cargoFmtCheck;
         "cargo-taplo" = cargoTaploCheck;
         "cargo-doc" = cargoDocCheck;

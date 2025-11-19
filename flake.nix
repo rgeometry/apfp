@@ -174,8 +174,92 @@
 
           touch $out
         '';
+
+      # Package that generates assembly output for human inspection
+      cargoAsmOutput =
+        pkgs.runCommand "cargo-asm-output" {
+          nativeBuildInputs = [
+            toolchain
+          ];
+          meta.description = "Assembly output for critical functions (for inspection)";
+        } ''
+          set -euo pipefail
+
+          # Copy source
+          cp -r ${src}/* .
+          chmod -R +w .
+
+          export CARGO_TARGET_DIR=$PWD/target
+          export CARGO_HOME=$PWD/.cargo
+
+          # Install cargo-asm
+          echo "Installing cargo-asm..."
+          cargo install --locked --root "$CARGO_HOME" cargo-asm 2>&1 || {
+            echo "Trying git fallback..."
+            cargo install --locked --root "$CARGO_HOME" --git https://github.com/pacak/cargo-asm cargo-asm 2>&1
+          }
+
+          # Add cargo-asm to PATH
+          export PATH="$CARGO_HOME/bin:$PATH"
+
+          # Build the library in release mode for the pinned target
+          echo "Building for target ${asmTarget}..."
+          cargo build --release --target ${asmTarget} --lib
+
+          # Create output directory
+          mkdir -p $out
+
+          # Generate assembly output for each function and save to files
+          for func in ${pkgs.lib.concatStringsSep " " (map pkgs.lib.escapeShellArg asmFunctions)}; do
+            echo "Generating assembly for function: $func"
+
+            # Convert function name to filename (replace :: with _)
+            filename=$(echo "$func" | sed 's/::/_/g')
+
+            # Generate assembly output
+            cargo asm --release --target ${asmTarget} --lib "$func" > "$out/$filename.s" 2>&1 || {
+              echo "Warning: Failed to generate assembly for $func, saving error output"
+              cargo asm --release --target ${asmTarget} --lib "$func" > "$out/$filename.s" 2>&1 || true
+            }
+
+            echo "Saved assembly to $out/$filename.s"
+          done
+
+          # Create a README with information about the assembly files
+          cat > $out/README.md <<EOF
+          # Assembly Output
+
+          This directory contains the generated assembly code for critical functions.
+
+          Target: ${asmTarget}
+          Build mode: release
+
+          Functions:
+          ${pkgs.lib.concatMapStringsSep "\n" (f: "- \`${f}\`") asmFunctions}
+
+          ## Files
+
+          ${pkgs.lib.concatMapStringsSep "\n" (f: "- \`$(echo ${f} | sed 's/::/_/g').s\` - Assembly for \`${f}\`") asmFunctions}
+
+          ## Viewing the Assembly
+
+          You can view these files with any text editor or use:
+          \`\`\`bash
+          cat \$out/*.s
+          \`\`\`
+
+          Or navigate to the package output:
+          \`\`\`bash
+          nix build .#cargoAsmOutput
+          cat result/*.s
+          \`\`\`
+          EOF
+
+          echo "Assembly output generated in $out"
+        '';
     in {
       packages.default = package;
+      packages.cargoAsmOutput = cargoAsmOutput;
 
       checks = {
         fmt = fmtCheck;

@@ -245,11 +245,11 @@
             filename=$(basename "$asm_file")
             echo "Checking $filename..."
 
-            # Run assertion check
-            "$checkNoAssertions" "$asm_file"
+            # Run assertion check (use bash explicitly to avoid shebang issues in sandbox)
+            ${pkgs.bash}/bin/bash "$checkNoAssertions" "$asm_file"
 
-            # Run allocation check
-            "$checkNoAllocations" "$asm_file"
+            # Run allocation check (use bash explicitly to avoid shebang issues in sandbox)
+            ${pkgs.bash}/bin/bash "$checkNoAllocations" "$asm_file"
 
             echo "✓ $filename passed all checks"
           done

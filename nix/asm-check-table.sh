@@ -171,7 +171,7 @@ check_col_width=18
 
 # Print table header
 echo ""
-echo -e "${BOLD}${BLUE}Assembly Check Results${NC}"
+printf '%b%bAssembly Check Results%b\n' "${BOLD}" "${BLUE}" "${NC}"
 echo ""
 
 # Top border
@@ -185,10 +185,10 @@ done
 printf '%s\n' "${SEP_TOP_RIGHT}"
 
 # Header row
-printf '%s%s%-*s%s' "${SEP_VERT}" "${BOLD}" $func_col_width "Function" "${NC}"
+printf '%s%b%-*s%b' "${SEP_VERT}" "${BOLD}" $func_col_width "Function" "${NC}"
 for check_entry in "${CHECK_SCRIPTS[@]}"; do
   IFS=':' read -r script_name check_label <<< "$check_entry"
-  printf '%s%s%-*s%s' "${SEP_VERT}" "${BOLD}" $check_col_width "$check_label" "${NC}"
+  printf '%s%b%-*s%b' "${SEP_VERT}" "${BOLD}" $check_col_width "$check_label" "${NC}"
 done
 printf '%s\n' "${SEP_VERT}"
 
@@ -207,7 +207,7 @@ for module in $(printf '%s\n' "${!MODULE_GROUPS[@]}" | sort); do
   
   # Print module header row if there's a module prefix
   if [ -n "$module" ]; then
-    printf '%s%s%s%-*s%s' "${SEP_VERT}" "${BOLD}" "${BLUE}" $func_col_width "$module::" "${NC}"
+    printf '%s%b%b%-*s%b' "${SEP_VERT}" "${BOLD}" "${BLUE}" $func_col_width "$module::" "${NC}"
     for check_entry in "${CHECK_SCRIPTS[@]}"; do
       printf '%s%*s' "${SEP_VERT}" $check_col_width ""
     done
@@ -235,10 +235,10 @@ for module in $(printf '%s\n' "${!MODULE_GROUPS[@]}" | sort); do
       
       if [ "$result" = "PASS" ]; then
         # Green background for entire cell - fixed width
-        printf '%s%s%*s%s' "${SEP_VERT}" "${GREEN_BG}" $check_col_width "" "${NC}"
+        printf '%s%b%*s%b' "${SEP_VERT}" "${GREEN_BG}" $check_col_width "" "${NC}"
       else
         # Red background for entire cell - fixed width
-        printf '%s%s%*s%s' "${SEP_VERT}" "${RED_BG}" $check_col_width "" "${NC}"
+        printf '%s%b%*s%b' "${SEP_VERT}" "${RED_BG}" $check_col_width "" "${NC}"
       fi
       
       ((check_idx++)) || true

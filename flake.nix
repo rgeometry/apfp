@@ -40,6 +40,7 @@
         inherit src pname version;
         nativeBuildInputs = [toolchain];
       };
+      vendorDeps = craneLib.vendorCargoDeps {inherit src;};
 
       package = craneLib.buildPackage {
         inherit src pname version cargoArtifacts;
@@ -87,6 +88,37 @@
           touch $out
         '';
 
+      cargoAsmOutput =
+        pkgs.runCommand "cargo-asm-output" {
+          inherit src cargoArtifacts vendorDeps;
+          nativeBuildInputs = [toolchain pkgs.cargo-show-asm pkgs.zstd];
+          buildInputs = [cargoArtifacts vendorDeps];
+        } ''
+          cd ${src}
+
+          TMPDIR=/tmp
+          CARGO_HOME="$TMPDIR/cargo-home"
+          CARGO_TARGET_DIR="$TMPDIR/target"
+
+          export CARGO_HOME CARGO_TARGET_DIR
+          export CARGO_NET_OFFLINE=true
+
+          mkdir -p "$CARGO_HOME" "$CARGO_TARGET_DIR" $out
+
+          cp ${vendorDeps}/config.toml "$CARGO_HOME/config.toml"
+
+          if [ -f "${cargoArtifacts}/target.tar.zst" ]; then
+            zstd -d "${cargoArtifacts}/target.tar.zst" --stdout | tar -x -C "$CARGO_TARGET_DIR"
+          elif [ -d "${cargoArtifacts}/target" ]; then
+            cp -a "${cargoArtifacts}/target/." "$CARGO_TARGET_DIR"
+          else
+            echo "cargoArtifacts missing at ${cargoArtifacts}"
+            exit 1
+          fi
+
+          cargo asm --release --lib "apfp::analysis::ast_static::orient2d" > $out/orient2d_fast.asm
+        '';
+
       cargoAuditCheck = craneLib.cargoAudit {
         inherit src pname version;
 
@@ -94,7 +126,12 @@
         nativeBuildInputs = [toolchain];
       };
     in {
-      packages.default = package;
+      packages = {
+        default = package;
+        cargoAsmOutput = cargoAsmOutput;
+      };
+
+      cargoAsmOutput = cargoAsmOutput;
 
       checks = {
         fmt = fmtCheck;

@@ -31,8 +31,7 @@
       craneLib = crane.mkLib pkgs;
       src = craneLib.cleanCargoSource (craneLib.path ./.);
       crateInfo = craneLib.crateNameFromCargoToml {cargoToml = ./Cargo.toml;};
-      pname = crateInfo.pname;
-      version = crateInfo.version;
+      inherit (crateInfo) pname version;
 
       toolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
 
@@ -92,6 +91,65 @@
           touch $out
         '';
 
+      # Source for linting (full repository, not filtered)
+      # Source for linting (full repository)
+      lintSrc = builtins.path {
+        path = ./.;
+      };
+
+      # Check all Nix files with alejandra and statix
+      nixLintCheck =
+        pkgs.runCommand "nix-lint-check" {
+          nativeBuildInputs = [pkgs.alejandra pkgs.statix pkgs.findutils];
+          inherit lintSrc;
+        } ''
+          set -euo pipefail
+          # Find all .nix files
+          nix_files=$(find "$lintSrc" -name "*.nix" -type f | sort)
+
+          if [ -z "$nix_files" ]; then
+            echo "No .nix files found to lint"
+            exit 1
+          fi
+
+          echo "Found $(echo "$nix_files" | wc -l) .nix file(s) to check"
+
+          # Check formatting with alejandra for each file
+          echo "$nix_files" | while read -r nix_file; do
+            echo "Checking formatting: $nix_file"
+            alejandra --check "$nix_file"
+          done
+
+          # Check with statix for style and best practices (warnings are treated as failures)
+          statix check "$lintSrc"
+          touch $out
+        '';
+
+      # Check all shell scripts with shellcheck (warnings are treated as failures)
+      shellcheckCheck =
+        pkgs.runCommand "shellcheck-check" {
+          nativeBuildInputs = [pkgs.shellcheck pkgs.findutils];
+          inherit lintSrc;
+        } ''
+          set -euo pipefail
+          # Find all .sh files
+          sh_files=$(find "$lintSrc" -name "*.sh" -type f | sort)
+
+          if [ -z "$sh_files" ]; then
+            echo "No .sh files found to lint"
+            exit 1
+          fi
+
+          echo "Found $(echo "$sh_files" | wc -l) .sh file(s) to check"
+
+          # Check each shell script
+          echo "$sh_files" | while read -r sh_file; do
+            echo "Checking: $sh_file"
+            shellcheck "$sh_file"
+          done
+          touch $out
+        '';
+
       cargoAuditCheck = craneLib.cargoAudit {
         inherit src pname version;
 
@@ -126,7 +184,7 @@
             toolchainWithTarget
             cargoAsmTool
           ];
-          builtPackage = builtPackage;
+          inherit builtPackage;
           meta.description = "Assembly output for critical functions (for inspection)";
         } ''
           set -euo pipefail
@@ -277,12 +335,15 @@
         '';
       };
     in {
-      packages.default = package;
-      packages.cargoAsmOutput = cargoAsmOutput;
-      packages.cargoAsmTool = cargoAsmTool;
+      packages = {
+        default = package;
+        inherit cargoAsmOutput cargoAsmTool;
+      };
 
       checks = {
         fmt = fmtCheck;
+        "nix-lint" = nixLintCheck;
+        "shellcheck" = shellcheckCheck;
         "cargo-fmt" = cargoFmtCheck;
         "cargo-taplo" = cargoTaploCheck;
         "cargo-doc" = cargoDocCheck;

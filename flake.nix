@@ -229,9 +229,13 @@
             filename=$(echo "$func" | sed 's/::/_/g')
 
             # Generate assembly output (using native target, offline mode)
-            cargo asm --release --lib "$func" --offline > "$out/$filename.s" 2>&1 || {
-              echo "Warning: Failed to generate assembly for $func, saving error output"
-              cargo asm --release --lib "$func" --offline > "$out/$filename.s" 2>&1 || true
+            # Filter out build messages - remove lines starting with "   Compiling", "   Finished", etc.
+            cargo asm --release --lib "$func" --offline 2>&1 | \
+              grep -v -E '^\s+(Compiling|Finished|Updating|error:|warning:|Caused by:)' | \
+              grep -v -E '^\s*$' > "$out/$filename.s" || {
+              echo "Warning: Failed to generate assembly for $func"
+              # Try again without filtering to see the error
+              cargo asm --release --lib "$func" --offline > "$out/$filename.s.error" 2>&1 || true
             }
 
             echo "Saved assembly to $out/$filename.s"

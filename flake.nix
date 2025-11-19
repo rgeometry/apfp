@@ -92,17 +92,9 @@
         '';
 
       # Source for linting (full repository, not filtered)
-      # Use builtins.path to get the full source without filtering
+      # Source for linting (full repository)
       lintSrc = builtins.path {
         path = ./.;
-        filter = path: type: let
-          baseName = baseNameOf path;
-        in
-          baseName
-          != ".git"
-          && baseName != "result"
-          && baseName != "target"
-          && baseName != ".direnv";
       };
 
       # Check all Nix files with alejandra and statix
@@ -112,13 +104,8 @@
           inherit lintSrc;
         } ''
           set -euo pipefail
-          # Find all .nix files, excluding common build/dependency directories
-          nix_files=$(find "$lintSrc" -name "*.nix" -type f \
-            ! -path "*/result/*" \
-            ! -path "*/.git/*" \
-            ! -path "*/target/*" \
-            ! -path "*/.direnv/*" \
-            | sort)
+          # Find all .nix files
+          nix_files=$(find "$lintSrc" -name "*.nix" -type f | sort)
 
           if [ -z "$nix_files" ]; then
             echo "No .nix files found to lint"
@@ -145,13 +132,8 @@
           inherit lintSrc;
         } ''
           set -euo pipefail
-          # Find all .sh files, excluding common build/dependency directories
-          sh_files=$(find "$lintSrc" -name "*.sh" -type f \
-            ! -path "*/result/*" \
-            ! -path "*/.git/*" \
-            ! -path "*/target/*" \
-            ! -path "*/.direnv/*" \
-            | sort)
+          # Find all .sh files
+          sh_files=$(find "$lintSrc" -name "*.sh" -type f | sort)
 
           if [ -z "$sh_files" ]; then
             echo "No .sh files found to lint"

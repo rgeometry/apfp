@@ -1,4 +1,5 @@
-use apfp::analysis::{orient2d_ast_exact, orient2d_fast};
+use apfp::analysis::ast_static::orient2d_exact;
+use apfp::analysis::{orient2d_adaptive, orient2d_direct, orient2d_fast};
 use apfp::{Coord, orient2d_rational};
 use criterion::{Criterion, criterion_group, criterion_main};
 use geometry_predicates::orient2d;
@@ -18,11 +19,27 @@ fn orient2d_fast_batch(samples: &[(Coord, Coord, Coord)]) {
     }
 }
 
-/// Benchmark the AST-based exact expansion arithmetic for orient2d.
-/// Uses Shewchuk's expansion arithmetic for exact computation.
+/// Benchmark the adaptive AST-based orient2d with fast-path filtering.
+/// Uses fast floating-point filter followed by exact expansion arithmetic.
+fn orient2d_adaptive_batch(samples: &[(Coord, Coord, Coord)]) {
+    for (a, b, c) in samples {
+        black_box(orient2d_adaptive(*a, *b, *c));
+    }
+}
+
+/// Benchmark the pure AST-based exact expansion arithmetic for orient2d.
+/// Uses Shewchuk's expansion arithmetic without fast-path filtering.
 fn orient2d_exact_batch(samples: &[(Coord, Coord, Coord)]) {
     for (a, b, c) in samples {
-        black_box(orient2d_ast_exact(*a, *b, *c));
+        black_box(orient2d_exact(*a, *b, *c));
+    }
+}
+
+/// Benchmark the direct expansion arithmetic for orient2d.
+/// Direct computation without AST overhead.
+fn orient2d_direct_batch(samples: &[(Coord, Coord, Coord)]) {
+    for (a, b, c) in samples {
+        black_box(orient2d_direct(*a, *b, *c));
     }
 }
 
@@ -45,7 +62,9 @@ fn orient2d_geometry_predicates_batch(samples: &[(Coord, Coord, Coord)]) {
 /// Benchmark suite comparing different orient2d implementations:
 /// - orient2d_fast: Fast floating-point filter (may return None) ~4.6µs
 /// - orient2d_geometry_predicates: geometry-predicates crate's adaptive precision ~5.3µs
-/// - orient2d_ast_exact: AST-based exact expansion arithmetic ~970µs
+/// - orient2d_adaptive: AST-based adaptive precision (fast filter + exact) ~10.3µs
+/// - orient2d_exact: Pure AST-based exact expansion arithmetic ~441µs
+/// - orient2d_direct: Direct expansion arithmetic without AST ~623µs
 /// - orient2d_rational: AST-based BigRational arithmetic (reference) ~43ms
 fn bench_orient2d(c: &mut Criterion) {
     let samples = generate_samples(SAMPLE_COUNT);
@@ -56,8 +75,16 @@ fn bench_orient2d(c: &mut Criterion) {
         b.iter(|| orient2d_fast_batch(black_box(&samples)))
     });
 
-    group.bench_function("orient2d_ast_exact", |b| {
+    group.bench_function("orient2d_adaptive", |b| {
+        b.iter(|| orient2d_adaptive_batch(black_box(&samples)))
+    });
+
+    group.bench_function("orient2d_exact", |b| {
         b.iter(|| orient2d_exact_batch(black_box(&samples)))
+    });
+
+    group.bench_function("orient2d_direct", |b| {
+        b.iter(|| orient2d_direct_batch(black_box(&samples)))
     });
 
     group.bench_function("orient2d_rational", |b| {
@@ -82,8 +109,16 @@ fn bench_orient2d_collinear(c: &mut Criterion) {
         b.iter(|| orient2d_fast_batch(black_box(&samples)))
     });
 
-    group.bench_function("orient2d_ast_exact", |b| {
+    group.bench_function("orient2d_adaptive", |b| {
+        b.iter(|| orient2d_adaptive_batch(black_box(&samples)))
+    });
+
+    group.bench_function("orient2d_exact", |b| {
         b.iter(|| orient2d_exact_batch(black_box(&samples)))
+    });
+
+    group.bench_function("orient2d_direct", |b| {
+        b.iter(|| orient2d_direct_batch(black_box(&samples)))
     });
 
     group.bench_function("orient2d_rational", |b| {

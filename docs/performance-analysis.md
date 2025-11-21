@@ -118,6 +118,46 @@ This generates assembly for the function in debug mode. For release optimization
 cargo asm --release --lib apfp::analysis::orient2d_fast
 ```
 
+### Example: Assembly Output for orient2d_fast
+
+Here's the actual release-mode assembly generated for `apfp::analysis::ast_static::orient2d_fast` on ARM64:
+
+```asm
+.section __TEXT,__text,regular,pure_instructions
+	.globl	apfp::analysis::ast_static::orient2d_fast
+	.p2align	2
+apfp::analysis::ast_static::orient2d_fast:
+Lfunc_begin16:
+	.cfi_startproc
+	fsub d0, d0, d4      ; Compute adx = ax - cx
+	fsub d3, d3, d5      ; Compute ady = ay - cy
+	fmul d0, d0, d3      ; Compute adx * ady
+	fsub d1, d1, d5      ; Compute bdy = by - cy
+	fsub d2, d2, d4      ; Compute bdx = bx - cx
+	fmul d1, d2, d1      ; Compute bdx * bdy
+	fsub d2, d0, d1      ; Compute det = (adx * ady) - (bdx * bdy)
+	fabs d0, d0          ; Compute |adx * ady|
+	fabs d1, d1          ; Compute |bdx * bdy|
+	fadd d0, d0, d1      ; Compute detsum = |adx * ady| + |bdx * bdy|
+	mov x8, #6           ; Load GAMMA7 constant (approximately 3.69779e-11)
+	movk x8, #15564, lsl #48
+	fmov d1, x8
+	fmul d3, d0, d1      ; Compute errbound = GAMMA7 * detsum
+	fnmul d0, d0, d1     ; Compute -errbound
+	fcmp d2, d0          ; Compare det with -errbound
+	mov w8, #2           ; Prepare Negative result
+	csinv w8, w8, wzr, pl ; Select Negative if det >= -errbound
+	fcmp d2, d3          ; Compare det with errbound
+	csinc w0, w8, wzr, le ; Select Zero if det <= errbound, otherwise keep result
+	ret                  ; Return result
+```
+
+This assembly shows the highly optimized implementation with:
+- 14 floating-point operations and 6 integer operations
+- No memory allocations or function calls
+- Efficient use of SIMD registers (d0-d5)
+- Conditional selection using ARM64's `csinv` and `csinc` instructions
+
 ### Using Nix for Consistent Assembly Output
 
 The project includes Nix-based tooling for consistent assembly generation across different platforms. The flake configuration targets `aarch64-unknown-linux-gnu` for reproducible output.

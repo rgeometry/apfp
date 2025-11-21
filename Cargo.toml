@@ -8,15 +8,17 @@ default = []
 short-circuit = []
 
 [dependencies]
+alloca = "0.4.0"
 num = { version = "0.4", features = [] }
+num-bigint = "0.4"
+num-rational = "0.4"
 
 [dev-dependencies]
 quickcheck = "1"
 ntest = "0.9"
-num-bigint = "0.4"
-num-rational = "0.4"
 num-traits = "0.2"
 robust = "1.2.0"
+geometry-predicates = "0.3"
 criterion = "0.7.0"
 
 [[bench]]

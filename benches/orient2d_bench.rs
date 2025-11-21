@@ -1,80 +1,103 @@
-use apfp::{
-    Coord, GeometryPredicateResult, orient2d, orient2d_fixed, orient2d_inexact_baseline,
-    orient2d_inexact_interval,
-};
+use apfp::analysis::{orient2d_ast_exact, orient2d_fast};
+use apfp::{Coord, orient2d_rational};
 use criterion::{Criterion, criterion_group, criterion_main};
-use num_rational::BigRational;
-use num_traits::{Signed, Zero};
+use geometry_predicates::orient2d;
 use std::hint::black_box;
 
+/// Number of random test cases to generate for benchmarking
 const SAMPLE_COUNT: usize = 5_000;
+
+/// Maximum absolute value for coordinate components to avoid overflow
 const MAG_LIMIT: f64 = 1.0e6;
 
-fn orient2d_apfp_batch(samples: &[(Coord, Coord, Coord)]) {
+/// Benchmark the fast floating-point filter for orient2d.
+/// This is the fastest implementation but may return None for difficult cases.
+fn orient2d_fast_batch(samples: &[(Coord, Coord, Coord)]) {
     for (a, b, c) in samples {
-        black_box(orient2d(a, b, c));
+        black_box(orient2d_fast(*a, *b, *c));
     }
 }
 
-fn orient2d_inexact_baseline_batch(samples: &[(Coord, Coord, Coord)]) {
+/// Benchmark the AST-based exact expansion arithmetic for orient2d.
+/// Uses Shewchuk's expansion arithmetic for exact computation.
+fn orient2d_exact_batch(samples: &[(Coord, Coord, Coord)]) {
     for (a, b, c) in samples {
-        black_box(orient2d_inexact_baseline(a, b, c));
+        black_box(orient2d_ast_exact(*a, *b, *c));
     }
 }
 
-fn orient2d_inexact_interval_batch(samples: &[(Coord, Coord, Coord)]) {
-    for (a, b, c) in samples {
-        black_box(orient2d_inexact_interval(a, b, c));
-    }
-}
-
+/// Benchmark the AST-based rational arithmetic for orient2d.
+/// Uses BigRational for mathematically exact computation.
 fn orient2d_rational_batch(samples: &[(Coord, Coord, Coord)]) {
     for (a, b, c) in samples {
-        black_box(orient2d_rational(a, b, c));
+        black_box(orient2d_rational(*a, *b, *c));
     }
 }
 
-fn orient2d_fixed_batch(samples: &[(Coord, Coord, Coord)]) {
+/// Benchmark the geometry-predicates crate's orient2d implementation.
+/// Uses adaptive precision arithmetic for exact computation.
+fn orient2d_geometry_predicates_batch(samples: &[(Coord, Coord, Coord)]) {
     for (a, b, c) in samples {
-        black_box(orient2d_fixed(a, b, c));
+        black_box(orient2d([a.x, a.y], [b.x, b.y], [c.x, c.y]));
     }
 }
 
-fn orient2d_robust_batch(samples: &[(Coord, Coord, Coord)]) {
-    for (a, b, c) in samples {
-        black_box(robust_orient2d(a, b, c));
-    }
-}
-
+/// Benchmark suite comparing different orient2d implementations:
+/// - orient2d_fast: Fast floating-point filter (may return None) ~4.6µs
+/// - orient2d_geometry_predicates: geometry-predicates crate's adaptive precision ~5.3µs
+/// - orient2d_ast_exact: AST-based exact expansion arithmetic ~970µs
+/// - orient2d_rational: AST-based BigRational arithmetic (reference) ~43ms
 fn bench_orient2d(c: &mut Criterion) {
     let samples = generate_samples(SAMPLE_COUNT);
 
-    c.bench_function("orient2d_apfp", |b| {
-        b.iter(|| orient2d_apfp_batch(black_box(&samples)))
+    let mut group = c.benchmark_group("orient2d_implementations");
+
+    group.bench_function("orient2d_fast", |b| {
+        b.iter(|| orient2d_fast_batch(black_box(&samples)))
     });
 
-    c.bench_function("orient2d_inexact_baseline", |b| {
-        b.iter(|| orient2d_inexact_baseline_batch(black_box(&samples)))
+    group.bench_function("orient2d_ast_exact", |b| {
+        b.iter(|| orient2d_exact_batch(black_box(&samples)))
     });
 
-    c.bench_function("orient2d_inexact_interval", |b| {
-        b.iter(|| orient2d_inexact_interval_batch(black_box(&samples)))
-    });
-
-    c.bench_function("orient2d_fixed", |b| {
-        b.iter(|| orient2d_fixed_batch(black_box(&samples)))
-    });
-
-    c.bench_function("orient2d_rational", |b| {
+    group.bench_function("orient2d_rational", |b| {
         b.iter(|| orient2d_rational_batch(black_box(&samples)))
     });
 
-    c.bench_function("orient2d_robust", |b| {
-        b.iter(|| orient2d_robust_batch(black_box(&samples)))
+    group.bench_function("orient2d_geometry_predicates", |b| {
+        b.iter(|| orient2d_geometry_predicates_batch(black_box(&samples)))
     });
+
+    group.finish();
 }
 
-criterion_group!(benches, bench_orient2d);
+/// Benchmark suite for co-linear points - the most challenging case for geometric predicates.
+/// Tests performance when all three points lie on the same line.
+fn bench_orient2d_collinear(c: &mut Criterion) {
+    let samples = generate_collinear_samples(SAMPLE_COUNT);
+
+    let mut group = c.benchmark_group("orient2d_collinear_points");
+
+    group.bench_function("orient2d_fast", |b| {
+        b.iter(|| orient2d_fast_batch(black_box(&samples)))
+    });
+
+    group.bench_function("orient2d_ast_exact", |b| {
+        b.iter(|| orient2d_exact_batch(black_box(&samples)))
+    });
+
+    group.bench_function("orient2d_rational", |b| {
+        b.iter(|| orient2d_rational_batch(black_box(&samples)))
+    });
+
+    group.bench_function("orient2d_geometry_predicates", |b| {
+        b.iter(|| orient2d_geometry_predicates_batch(black_box(&samples)))
+    });
+
+    group.finish();
+}
+
+criterion_group!(benches, bench_orient2d, bench_orient2d_collinear);
 criterion_main!(benches);
 
 fn generate_samples(count: usize) -> Vec<(Coord, Coord, Coord)> {
@@ -101,67 +124,59 @@ fn lcg(state: &mut u64) -> f64 {
     (val * 2000.0) - 1000.0
 }
 
-fn orient2d_rational(a: &Coord, b: &Coord, c: &Coord) -> GeometryPredicateResult {
-    let Some(ax) = BigRational::from_float(a.x) else {
-        return GeometryPredicateResult::Zero;
-    };
-    let Some(ay) = BigRational::from_float(a.y) else {
-        return GeometryPredicateResult::Zero;
-    };
-    let Some(bx) = BigRational::from_float(b.x) else {
-        return GeometryPredicateResult::Zero;
-    };
-    let Some(by) = BigRational::from_float(b.y) else {
-        return GeometryPredicateResult::Zero;
-    };
-    let Some(cx) = BigRational::from_float(c.x) else {
-        return GeometryPredicateResult::Zero;
-    };
-    let Some(cy) = BigRational::from_float(c.y) else {
-        return GeometryPredicateResult::Zero;
-    };
-
-    let bax = &bx - &ax;
-    let bay = &by - &ay;
-    let cax = &cx - &ax;
-    let cay = &cy - &ay;
-
-    let det = bax * &cay - bay * &cax;
-    result_from_rational(det)
-}
-
-fn robust_orient2d(a: &Coord, b: &Coord, c: &Coord) -> GeometryPredicateResult {
-    let val = robust::orient2d(robust_coord(a), robust_coord(b), robust_coord(c));
-    result_from_f64(val)
-}
-
-fn robust_coord(coord: &Coord) -> robust::Coord<f64> {
-    robust::Coord {
-        x: coord.x,
-        y: coord.y,
-    }
-}
-
-fn result_from_rational(r: BigRational) -> GeometryPredicateResult {
-    if r.is_zero() {
-        GeometryPredicateResult::Zero
-    } else if r.is_positive() {
-        GeometryPredicateResult::Positive
-    } else {
-        GeometryPredicateResult::Negative
-    }
-}
-
-fn result_from_f64(value: f64) -> GeometryPredicateResult {
-    if value == 0.0 {
-        GeometryPredicateResult::Zero
-    } else if value > 0.0 {
-        GeometryPredicateResult::Positive
-    } else {
-        GeometryPredicateResult::Negative
-    }
-}
-
 fn within_limits(values: &[f64]) -> bool {
     values.iter().all(|v| v.is_finite() && v.abs() <= MAG_LIMIT)
+}
+
+/// Generate samples where all three points are co-linear (lie on the same line).
+/// This creates the most challenging test cases for geometric predicates.
+fn generate_collinear_samples(count: usize) -> Vec<(Coord, Coord, Coord)> {
+    let mut state = 0x1234_5678_9abc_def0u64;
+    let mut samples = Vec::with_capacity(count);
+
+    while samples.len() < count {
+        // Generate a base line defined by two points
+        let x1 = lcg(&mut state);
+        let y1 = lcg(&mut state);
+        let x2 = lcg(&mut state);
+        let y2 = lcg(&mut state);
+
+        // Skip if base points are too close (degenerate line)
+        let dx = x2 - x1;
+        let dy = y2 - y1;
+        if (dx * dx + dy * dy).sqrt() < 1e-6 {
+            continue;
+        }
+
+        // Generate three points along this line with small perturbations
+        // This creates near-co-linear configurations that challenge floating-point precision
+        let t1 = lcg(&mut state) * 0.1; // Small parameter along line
+        let t2 = 0.5 + lcg(&mut state) * 0.1; // Middle region
+        let t3 = 1.0 + lcg(&mut state) * 0.1; // End region
+
+        // Calculate points along the line
+        let px1 = x1 + t1 * dx;
+        let py1 = y1 + t1 * dy;
+        let px2 = x1 + t2 * dx;
+        let py2 = y1 + t2 * dy;
+        let px3 = x1 + t3 * dx;
+        let py3 = y1 + t3 * dy;
+
+        // Add tiny perturbations to make them slightly non-co-linear
+        // This creates the challenging near-co-linear cases
+        let eps = 1e-15; // Extremely small perturbation for near-collinear cases
+        let px3_pert = px3 + eps * lcg(&mut state);
+        let py3_pert = py3 + eps * lcg(&mut state);
+
+        let coords = [px1, py1, px2, py2, px3_pert, py3_pert];
+        if within_limits(&coords) {
+            samples.push((
+                Coord::new(px1, py1),
+                Coord::new(px2, py2),
+                Coord::new(px3_pert, py3_pert),
+            ));
+        }
+    }
+
+    samples
 }

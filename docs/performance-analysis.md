@@ -29,6 +29,20 @@ cargo bench --bench orient2d_bench
 
 This will run the `orient2d_bench` benchmark suite, which includes performance tests for various `orient2d` implementations.
 
+### Quick Benchmark Mode
+
+For faster iteration during development, you can use Criterion's `--quick` flag when 2-3% measurement variation is acceptable:
+
+```bash
+cargo bench --bench orient2d_bench -- --quick
+```
+
+The `--quick` flag:
+- Reduces the number of measurement samples
+- Uses shorter warm-up periods
+- Provides results in seconds rather than minutes
+- Trades accuracy for speed during development and debugging
+
 ### Analyzing Benchmark Results
 
 The benchmark suite includes several variants of the `orient2d` function:

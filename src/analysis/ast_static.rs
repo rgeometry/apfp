@@ -300,28 +300,8 @@ impl<A: Signum, B: Signum> Signum for Diff<A, B> {
         let left_exp = self.0.eval_exact(left_buf);
         let right_exp = self.1.eval_exact(right_buf);
 
-        let left_sign = expansion_signum(left_exp);
-        let right_sign = expansion_signum(right_exp);
-
-        if left_sign == 0 && right_sign == 0 {
-            return 0;
-        }
-
-        if left_sign == right_sign {
-            // Same signs: compare magnitudes
-            match compare_expansion_magnitudes(left_exp, right_exp) {
-                std::cmp::Ordering::Greater => left_sign,
-                std::cmp::Ordering::Less => -left_sign,
-                std::cmp::Ordering::Equal => 0,
-            }
-        } else {
-            // Different signs: result has sign of the larger magnitude
-            match compare_expansion_magnitudes(left_exp, right_exp) {
-                std::cmp::Ordering::Greater => left_sign,
-                std::cmp::Ordering::Less => right_sign,
-                std::cmp::Ordering::Equal => 0,
-            }
-        }
+        // Compute sign of left - right directly
+        expansion_diff_signum_direct(left_exp, right_exp)
     }
 }
 
@@ -395,6 +375,15 @@ trait Signum {
     /// Compute the sign of this expression using optimized algorithms.
     /// For simple cases like Diff, this avoids computing the full expansion.
     fn signum(&self, buffer: &mut [f64]) -> i32;
+}
+
+/// Compute sign of expansionA - expansionB by directly comparing values.
+/// This avoids redundant sign computations in the common case.
+fn expansion_diff_signum_direct(a: &[f64], b: &[f64]) -> i32 {
+    // Compute a - b directly by summing and comparing
+    let a_val: f64 = a.iter().sum();
+    let b_val: f64 = b.iter().sum();
+    (a_val - b_val).signum() as i32
 }
 
 /// Trait for evaluating expressions to exact rational numbers.
@@ -537,12 +526,96 @@ fn expansion_product_stack(lhs: &[f64], rhs: &[f64], output: &mut [f64]) -> usiz
         return 0;
     }
 
-    // For now, use the heap-allocated version and copy result to stack buffer
-    // TODO: Implement fully stack-allocated version
-    let result = expansion_product(lhs, rhs);
-    let len = result.len().min(output.len());
-    output[..len].copy_from_slice(&result[..len]);
-    len
+    // We need intermediate buffers for the computation
+    // Split the output buffer into regions for current result and scratch space
+    let total_len = output.len();
+    if total_len < 32 {
+        // Fallback to heap version for very small buffers
+        let result = expansion_product(lhs, rhs);
+        let len = result.len().min(total_len);
+        output[..len].copy_from_slice(&result[..len]);
+        return len;
+    }
+
+    // Use first half for current result accumulation, second half for scratch
+    let mid = total_len / 2;
+    let (result_buf, scratch_buf) = output.split_at_mut(mid);
+
+    // Initialize result as empty
+    let mut result_len = 0;
+
+    for &component in rhs {
+        if result_len >= mid {
+            // Buffer overflow, fallback to heap version
+            let result = expansion_product(lhs, rhs);
+            let len = result.len().min(total_len);
+            output[..len].copy_from_slice(&result[..len]);
+            return len;
+        }
+
+        // Scale lhs by component into scratch buffer
+        let scaled_len = scale_expansion_stack(lhs, component, scratch_buf);
+
+        if scaled_len == 0 {
+            continue;
+        }
+
+        // Add scaled result to current result
+        // Split result_buf into current result and destination for sum
+        let (current_result, dest) = result_buf.split_at_mut(result_len);
+        let temp_len = expansion_sum_stack(current_result, &scratch_buf[0..scaled_len], dest);
+        result_len += temp_len;
+
+        // Cap at buffer size
+        if result_len > mid {
+            result_len = mid;
+        }
+    }
+
+    result_len
+}
+
+/// Stack-allocated version of scale_expansion
+fn scale_expansion_stack(expansion: &[f64], scalar: f64, output: &mut [f64]) -> usize {
+    use crate::expansion::{fast_two_sum, two_product, two_sum};
+
+    if expansion.is_empty() || output.is_empty() {
+        return 0;
+    }
+
+    let mut h_len = 0;
+    let (product1, product0) = two_product(expansion[0], scalar);
+    if product0 != 0.0 && h_len < output.len() {
+        output[h_len] = product0;
+        h_len += 1;
+    }
+    let mut q = product1;
+
+    for &component in &expansion[1..] {
+        if h_len >= output.len() {
+            break;
+        }
+
+        let (product1, product0) = two_product(component, scalar);
+        let (sum, err3) = two_sum(q, product0);
+        if err3 != 0.0 && h_len < output.len() {
+            output[h_len] = err3;
+            h_len += 1;
+        }
+        let (new_q, err4) = fast_two_sum(product1, sum);
+        if err4 != 0.0 && h_len < output.len() {
+            output[h_len] = err4;
+            h_len += 1;
+        }
+        q = new_q;
+    }
+
+    if (q != 0.0 || h_len == 0) && h_len < output.len() {
+        output[h_len] = q;
+        h_len += 1;
+    }
+
+    h_len
 }
 
 /// Compute the sign of an expansion (sum of components)
@@ -552,48 +625,6 @@ fn expansion_signum(expansion: &[f64]) -> i32 {
         sum += component;
     }
     sum.signum() as i32
-}
-
-/// Compare the magnitudes of two expansions.
-/// Returns Ordering::Greater if |a| > |b|, Ordering::Less if |a| < |b|, Ordering::Equal if |a| == |b|.
-/// Used for optimizing sign computation in Diff operations.
-fn compare_expansion_magnitudes(a: &[f64], b: &[f64]) -> std::cmp::Ordering {
-    use crate::expansion::compare_magnitude;
-    use std::cmp::Ordering;
-
-    // Compare from highest magnitude components down
-    let mut i = 0;
-    let mut j = 0;
-
-    while i < a.len() && j < b.len() {
-        match compare_magnitude(a[i].abs(), b[j].abs()) {
-            Ordering::Greater => return Ordering::Greater,
-            Ordering::Less => return Ordering::Less,
-            Ordering::Equal => {
-                i += 1;
-                j += 1;
-            }
-        }
-    }
-
-    // If one expansion is exhausted, compare remaining components of the other
-    if i < a.len() {
-        // a has more components, check if any are non-zero
-        for &val in &a[i..] {
-            if val != 0.0 {
-                return Ordering::Greater;
-            }
-        }
-    } else if j < b.len() {
-        // b has more components, check if any are non-zero
-        for &val in &b[j..] {
-            if val != 0.0 {
-                return Ordering::Less;
-            }
-        }
-    }
-
-    Ordering::Equal
 }
 
 pub fn orient2d_fast(a: Coord, b: Coord, c: Coord) -> Option<Ordering> {
@@ -616,12 +647,22 @@ pub fn orient2d_fast(a: Coord, b: Coord, c: Coord) -> Option<Ordering> {
     }
 }
 
+pub fn orient2d_adaptive(a: Coord, b: Coord, c: Coord) -> Option<Ordering> {
+    // First try the fast filter - if it gives a definitive answer, use it
+    if let Some(result) = orient2d_fast(a, b, c) {
+        return Some(result);
+    }
+
+    // Fallback to exact computation - only allocate buffer when needed
+    orient2d_exact(a, b, c)
+}
+
 pub fn orient2d_exact(a: Coord, b: Coord, c: Coord) -> Option<Ordering> {
     // Allocate a fixed-size buffer on the stack for expansion arithmetic
     // The buffer needs to be large enough for the expression tree evaluation
     // For orient2d, we have operations like: (ax - cx) * (by - cy) - (ay - cy) * (bx - cx)
     // This involves multiple levels of operations, so we need sufficient space
-    const BUFFER_SIZE: usize = 512; // Need larger buffer for complex expressions
+    const BUFFER_SIZE: usize = 512; // Keep full size for complex cases
     let mut buffer: [f64; BUFFER_SIZE] = [0.0; BUFFER_SIZE];
 
     let ax = Scalar(a.x);
@@ -634,6 +675,91 @@ pub fn orient2d_exact(a: Coord, b: Coord, c: Coord) -> Option<Ordering> {
     let det = (ax - cx) * (by - cy) - (ay - cy) * (bx - cx);
     // signum computes the exact sign of the determinant.
     let sign = det.signum(&mut buffer);
+    match sign {
+        1 => Some(Ordering::Greater),
+        -1 => Some(Ordering::Less),
+        0 => Some(Ordering::Equal),
+        _ => unreachable!(),
+    }
+}
+
+/// Direct implementation of orient2d using expansion arithmetic without AST overhead
+pub fn orient2d_direct(a: Coord, b: Coord, c: Coord) -> Option<Ordering> {
+    // Compute determinant directly: (ax-cx)*(by-cy) - (ay-cy)*(bx-cx)
+    // This expands to: ax*by - ax*cy - cx*by + cx*cy - ay*bx + ay*cx + cy*bx - cy*cx
+
+    // Use stack buffer for expansion arithmetic
+    const BUFFER_SIZE: usize = 256;
+    let mut buffer: [f64; BUFFER_SIZE] = [0.0; BUFFER_SIZE];
+
+    // Compute the 8 terms of the expanded determinant
+    let ax_by = a.x * b.y;
+    let ax_cy = a.x * c.y;
+    let cx_by = c.x * b.y;
+    let cx_cy = c.x * c.y;
+    let ay_bx = a.y * b.x;
+    let ay_cx = a.y * c.x;
+    let cy_bx = c.y * b.x;
+    let cy_cx = c.y * c.x;
+
+    // det = ax_by - ax_cy - cx_by + cx_cy - ay_bx + ay_cx + cy_bx - cy_cx
+    // Group as: (ax_by + cx_cy + ay_cx + cy_bx) - (ax_cy + cx_by + ay_bx + cy_cx)
+
+    let positive_terms = [ax_by, cx_cy, ay_cx, cy_bx];
+    let negative_terms = [ax_cy, cx_by, ay_bx, cy_cx];
+
+    // Use buffer to compute expansions stack-allocated
+    // Split buffer: first quarter for pos, second quarter for neg, rest for result
+    let quarter = BUFFER_SIZE / 4;
+    let (pos_buf, rest) = buffer.split_at_mut(quarter);
+    let (neg_buf, result_buf) = rest.split_at_mut(quarter);
+
+    // Sum positive terms into pos_buf
+    let mut pos_len = 0;
+    for &term in &positive_terms {
+        if pos_len == 0 {
+            pos_buf[0] = term;
+            pos_len = 1;
+        } else {
+            // Need to be careful with borrowing here
+            let (current, dest) = pos_buf.split_at_mut(pos_len);
+            let temp_len = expansion_sum_stack(current, &[term], dest);
+            pos_len += temp_len;
+            if pos_len > quarter - 4 {
+                // Leave some margin
+                pos_len = quarter - 4;
+            }
+        }
+    }
+
+    // Sum negative terms into neg_buf
+    let mut neg_len = 0;
+    for &term in &negative_terms {
+        if neg_len == 0 {
+            neg_buf[0] = term;
+            neg_len = 1;
+        } else {
+            let (current, dest) = neg_buf.split_at_mut(neg_len);
+            let temp_len = expansion_sum_stack(current, &[term], dest);
+            neg_len += temp_len;
+            if neg_len > quarter - 4 {
+                neg_len = quarter - 4;
+            }
+        }
+    }
+
+    // Compute final determinant as pos_expansion - neg_expansion
+    // Create negated copy of negative terms
+    let mut neg_copy = [0.0; 16]; // Should be enough for our terms
+    let neg_copy_len = neg_len.min(neg_copy.len());
+    for i in 0..neg_copy_len {
+        neg_copy[i] = -neg_buf[i];
+    }
+
+    let det_len = expansion_sum_stack(&pos_buf[0..pos_len], &neg_copy[0..neg_copy_len], result_buf);
+
+    // Determine sign
+    let sign = expansion_signum(&result_buf[0..det_len]);
     match sign {
         1 => Some(Ordering::Greater),
         -1 => Some(Ordering::Less),

@@ -361,6 +361,13 @@ cargo fmt --check
 - Preserve exact arithmetic fallbacks for correctness
 - Keep code maintainable and readable
 
+## Recent AST Evaluator Improvements
+
+- `orient2d_exact` (and every other AST expression) no longer zeroes a 4 KB stack buffer per call. We now use `MaybeUninit<[f64; N]>` so only the regions we write are touched, eliminating the `_bzero` in the assembly.
+- `expansion_product_stack` was reworked to keep all scratch space on the stack via `alloca`. The old implementation split the output buffer in half and fell back to heap allocations whenever the buffer was “too small”; that path was dominating for small expressions.
+- These two changes make the generic AST evaluator allocation-free even for tiny products/differences and produced a ~23% win for `orient2d_exact` (358 µs → 276 µs) plus a ~20% win on the collinear suite (469 µs → 377 µs).
+- Because `expansion_product_stack` is shared across every AST node, the improvement applies to all expressions built with `Scalar`, `Sum`, `Diff`, `Product`, etc., not just orient2d.
+
 ## Troubleshooting
 
 ### Benchmarks Not Running

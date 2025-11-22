@@ -5,7 +5,9 @@
 pub mod ast_static;
 
 // Re-export the AST-based implementations
-pub use ast_static::{orient2d_adaptive, orient2d_direct, orient2d_rational};
+pub use ast_static::{
+    orient2d_adaptive, orient2d_direct, orient2d_geometry_predicates, orient2d_rational,
+};
 
 use crate::geometry::{Coord, GeometryPredicateResult};
 use num::{BigRational, Zero};

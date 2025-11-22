@@ -1,10 +1,14 @@
-use crate::expansion::expansion_product;
 use crate::geometry::Coord;
+use alloca::with_alloca_zeroed;
+use geometry_predicates::orient2d as gp_orient2d;
 use num_rational::BigRational;
 use std::{
     cmp::Ordering,
+    mem::MaybeUninit,
     ops::{Add, Mul, Neg, Sub},
 };
+
+use crate::expansion::two_sum;
 
 #[derive(Debug, Clone, Copy)]
 struct Scalar(f64);
@@ -15,6 +19,15 @@ struct Sum<A, B>(A, B);
 struct Product<A, B>(A, B);
 
 struct Diff<A, B>(A, B);
+
+#[derive(Debug, Clone, Copy)]
+struct DiffScalarScalar(Scalar, Scalar);
+
+impl DiffScalarScalar {
+    fn new(lhs: Scalar, rhs: Scalar) -> Self {
+        Self(lhs, rhs)
+    }
+}
 
 impl<A: Eval + OperationCount, B: Eval + OperationCount> Diff<A, B> {
     fn eval_bounded(&self, variables: &[f64]) -> (f64, f64) {
@@ -99,13 +112,20 @@ macro_rules! impl_ops {
 }
 
 // Implement Add, Sub, Mul, Neg for all arithmetic types
-impl_ops!(Scalar);
 // impl_ops!(Float);
 impl_ops!(Negate[A]);
 impl_ops!(Square[A]);
 impl_ops!(Sum[A, B]);
 impl_ops!(Product[A, B]);
 impl_ops!(Diff[A, B]);
+
+impl Sub<Scalar> for Scalar {
+    type Output = DiffScalarScalar;
+
+    fn sub(self, rhs: Scalar) -> Self::Output {
+        DiffScalarScalar::new(self, rhs)
+    }
+}
 
 macro_rules! impl_eval {
     // Zero-arg case: Type => expr (expr can use 'self' and 'variables')
@@ -152,9 +172,12 @@ impl Eval for Scalar {
 }
 
 impl Signum for Scalar {
+    const MAX_LEN: usize = 1;
+    const STACK_LEN: usize = 1;
+
     fn eval_exact<'a>(&self, buffer: &'a mut [f64]) -> &'a [f64] {
         buffer[0] = self.0;
-        &buffer[0..1]
+        &buffer[..1]
     }
 
     fn signum(&self, _buffer: &mut [f64]) -> i32 {
@@ -178,9 +201,12 @@ impl Eval for f64 {
 }
 
 impl Signum for f64 {
+    const MAX_LEN: usize = 1;
+    const STACK_LEN: usize = 1;
+
     fn eval_exact<'a>(&self, buffer: &'a mut [f64]) -> &'a [f64] {
         buffer[0] = *self;
-        &buffer[0..1]
+        &buffer[..1]
     }
 
     fn signum(&self, _buffer: &mut [f64]) -> i32 {
@@ -198,15 +224,16 @@ impl_eval!(Negate[a] => -a);
 impl_eval!(Square[a] => a.powi(2));
 
 impl<T: Signum> Signum for Negate<T> {
-    fn eval_exact<'a>(&self, buffer: &'a mut [f64]) -> &'a [f64] {
-        let layout = BufferLayout::new(buffer);
-        let (input_buf, output_buf) = layout.unary_split();
+    const MAX_LEN: usize = T::MAX_LEN;
+    const STACK_LEN: usize = T::STACK_LEN + T::MAX_LEN;
 
+    fn eval_exact<'a>(&self, buffer: &'a mut [f64]) -> &'a [f64] {
+        let (input_buf, output_buf) = buffer.split_at_mut(T::STACK_LEN);
         let inner = self.0.eval_exact(input_buf);
-        for (i, &val) in inner.iter().enumerate() {
-            output_buf[i] = -val;
+        for (dst, &val) in output_buf.iter_mut().zip(inner.iter()) {
+            *dst = -val;
         }
-        &output_buf[0..inner.len()]
+        &output_buf[..inner.len()]
     }
 
     fn signum(&self, buffer: &mut [f64]) -> i32 {
@@ -221,16 +248,15 @@ impl<T: ToRational> ToRational for Negate<T> {
 }
 
 impl<T: Signum> Signum for Square<T> {
-    fn eval_exact<'a>(&self, buffer: &'a mut [f64]) -> &'a [f64] {
-        let layout = BufferLayout::new(buffer);
-        let (input_buf, output_buf) = layout.unary_split();
+    const MAX_LEN: usize = 1;
+    const STACK_LEN: usize = T::STACK_LEN + T::MAX_LEN;
 
+    fn eval_exact<'a>(&self, buffer: &'a mut [f64]) -> &'a [f64] {
+        let (input_buf, output_buf) = buffer.split_at_mut(T::STACK_LEN);
         let inner = self.0.eval_exact(input_buf);
-        // For squaring, we need to compute the square of the expansion
-        // For now, approximate by squaring the sum
         let sum: f64 = inner.iter().sum();
         output_buf[0] = sum * sum;
-        &output_buf[0..1]
+        &output_buf[..1]
     }
 
     fn signum(&self, buffer: &mut [f64]) -> i32 {
@@ -250,20 +276,29 @@ impl_eval!(Sum[a, b] => a + b);
 impl_eval!(Diff[a, b] => a - b);
 impl_eval!(Product[a, b] => a * b);
 
+impl Eval for DiffScalarScalar {
+    fn eval(&self, _variables: &[f64]) -> f64 {
+        self.0.eval(&[]) - self.1.eval(&[])
+    }
+}
+
 impl<A: Signum, B: Signum> Signum for Sum<A, B> {
+    const MAX_LEN: usize = A::MAX_LEN + B::MAX_LEN;
+    const STACK_LEN: usize = A::STACK_LEN + B::STACK_LEN + Self::MAX_LEN;
+
     fn eval_exact<'a>(&self, buffer: &'a mut [f64]) -> &'a [f64] {
-        let layout = BufferLayout::new(buffer);
-        let (left_buf, right_buf, result_buf) = layout.binary_split();
+        let (left_buf, rest) = buffer.split_at_mut(A::STACK_LEN);
+        let (right_buf, rest) = rest.split_at_mut(B::STACK_LEN);
+        let (result_buf, _) = rest.split_at_mut(Self::MAX_LEN);
 
         let left_exp = self.0.eval_exact(left_buf);
         let right_exp = self.1.eval_exact(right_buf);
 
         let result_len = expansion_sum_stack(left_exp, right_exp, result_buf);
-        &result_buf[0..result_len]
+        &result_buf[..result_len]
     }
 
     fn signum(&self, buffer: &mut [f64]) -> i32 {
-        // For sum, we need the actual expansion to determine the sign
         let expansion = self.eval_exact(buffer);
         expansion_signum(expansion)
     }
@@ -276,31 +311,34 @@ impl<A: ToRational, B: ToRational> ToRational for Sum<A, B> {
 }
 
 impl<A: Signum, B: Signum> Signum for Diff<A, B> {
+    const MAX_LEN: usize = A::MAX_LEN + B::MAX_LEN;
+    const STACK_LEN: usize = A::STACK_LEN + B::STACK_LEN + B::MAX_LEN + Self::MAX_LEN;
+
     fn eval_exact<'a>(&self, buffer: &'a mut [f64]) -> &'a [f64] {
-        let layout = BufferLayout::new(buffer);
-        let (left_buf, right_buf, temp_buf, result_buf) = layout.binary_with_temp();
+        let (left_buf, rest) = buffer.split_at_mut(A::STACK_LEN);
+        let (right_buf, rest) = rest.split_at_mut(B::STACK_LEN);
+        let (temp_buf, rest) = rest.split_at_mut(B::MAX_LEN);
+        let (result_buf, _) = rest.split_at_mut(Self::MAX_LEN);
 
         let left_exp = self.0.eval_exact(left_buf);
         let right_exp = self.1.eval_exact(right_buf);
 
-        // For subtraction, negate the right expansion first
         for (i, &val) in right_exp.iter().enumerate() {
             temp_buf[i] = -val;
         }
-        let neg_right_exp = &temp_buf[0..right_exp.len()];
+        let neg_right_exp = &temp_buf[..right_exp.len()];
 
         let result_len = expansion_sum_stack(left_exp, neg_right_exp, result_buf);
-        &result_buf[0..result_len]
+        &result_buf[..result_len]
     }
 
     fn signum(&self, buffer: &mut [f64]) -> i32 {
-        let layout = BufferLayout::new(buffer);
-        let (left_buf, right_buf, _, _) = layout.binary_with_temp();
+        let (left_buf, rest) = buffer.split_at_mut(A::STACK_LEN);
+        let (right_buf, _) = rest.split_at_mut(B::STACK_LEN);
 
         let left_exp = self.0.eval_exact(left_buf);
         let right_exp = self.1.eval_exact(right_buf);
 
-        // Compute sign of left - right directly
         expansion_diff_signum_direct(left_exp, right_exp)
     }
 }
@@ -312,29 +350,60 @@ impl<A: ToRational, B: ToRational> ToRational for Diff<A, B> {
 }
 
 impl<A: Signum, B: Signum> Signum for Product<A, B> {
+    const MAX_LEN: usize = 2 * A::MAX_LEN * B::MAX_LEN;
+    const STACK_LEN: usize = A::STACK_LEN + B::STACK_LEN + Self::MAX_LEN;
+
     fn eval_exact<'a>(&self, buffer: &'a mut [f64]) -> &'a [f64] {
-        let layout = BufferLayout::new(buffer);
-        let (left_buf, right_buf, result_buf) = layout.binary_split();
+        let (left_buf, rest) = buffer.split_at_mut(A::STACK_LEN);
+        let (right_buf, rest) = rest.split_at_mut(B::STACK_LEN);
+        let (result_buf, _) = rest.split_at_mut(Self::MAX_LEN);
 
         let left_exp = self.0.eval_exact(left_buf);
         let right_exp = self.1.eval_exact(right_buf);
 
         let result_len = expansion_product_stack(left_exp, right_exp, result_buf);
-        &result_buf[0..result_len]
+        &result_buf[..result_len]
     }
 
     fn signum(&self, buffer: &mut [f64]) -> i32 {
-        let mid = buffer.len() / 2;
-        let (left_buf, right_buf) = buffer.split_at_mut(mid);
+        let (left_buf, rest) = buffer.split_at_mut(A::STACK_LEN);
+        let (right_buf, _) = rest.split_at_mut(B::STACK_LEN);
         let left_sign = self.0.signum(left_buf);
         let right_sign = self.1.signum(right_buf);
         left_sign * right_sign
     }
 }
 
+impl Signum for DiffScalarScalar {
+    const MAX_LEN: usize = 2;
+    const STACK_LEN: usize = 2;
+
+    fn eval_exact<'a>(&self, buffer: &'a mut [f64]) -> &'a [f64] {
+        let (sum, err) = two_sum(self.0.0, -self.1.0);
+        if err != 0.0 {
+            buffer[0] = err;
+            buffer[1] = sum;
+            &buffer[..2]
+        } else {
+            buffer[0] = sum;
+            &buffer[..1]
+        }
+    }
+
+    fn signum(&self, _buffer: &mut [f64]) -> i32 {
+        (self.0.0 - self.1.0).signum() as i32
+    }
+}
+
 impl<A: ToRational, B: ToRational> ToRational for Product<A, B> {
     fn to_rational(&self) -> BigRational {
         self.0.to_rational() * self.1.to_rational()
+    }
+}
+
+impl ToRational for DiffScalarScalar {
+    fn to_rational(&self) -> BigRational {
+        self.0.to_rational() - self.1.to_rational()
     }
 }
 
@@ -368,6 +437,8 @@ trait OperationCount {
 /// Trait for exact arithmetic evaluation of expression signs.
 /// Provides two methods: eval_exact for computing full expansions, and signum for optimized sign computation.
 trait Signum {
+    const MAX_LEN: usize;
+    const STACK_LEN: usize;
     /// Compute the exact expansion of this expression.
     /// Returns a slice into the buffer containing the expansion components.
     fn eval_exact<'a>(&self, buffer: &'a mut [f64]) -> &'a [f64];
@@ -375,6 +446,11 @@ trait Signum {
     /// Compute the sign of this expression using optimized algorithms.
     /// For simple cases like Diff, this avoids computing the full expansion.
     fn signum(&self, buffer: &mut [f64]) -> i32;
+
+    #[inline(always)]
+    fn stack_len(&self) -> usize {
+        Self::STACK_LEN
+    }
 }
 
 /// Compute sign of expansionA - expansionB by directly comparing values.
@@ -407,42 +483,39 @@ const fn operation_count<T: OperationCount>(_value: &T) -> usize {
     T::OPERATION_COUNT
 }
 
-/// Helper for managing buffer allocation in expression evaluation.
-/// Provides structured access to buffer regions for subexpressions and results.
-/// This abstracts away manual buffer splitting and makes allocation patterns explicit.
-struct BufferLayout<'a> {
-    buffer: &'a mut [f64],
+impl OperationCount for DiffScalarScalar {
+    const OPERATION_COUNT: usize = 1;
 }
 
-impl<'a> BufferLayout<'a> {
-    fn new(buffer: &'a mut [f64]) -> Self {
-        Self { buffer }
-    }
+impl<A> Add<A> for DiffScalarScalar {
+    type Output = Sum<Self, A>;
 
-    /// Split buffer for unary operation: input region and output region.
-    /// Used for operations like Negate and Square.
-    fn unary_split(self) -> (&'a mut [f64], &'a mut [f64]) {
-        let half = self.buffer.len() / 2;
-        self.buffer.split_at_mut(half)
+    fn add(self, rhs: A) -> Self::Output {
+        Sum(self, rhs)
     }
+}
 
-    /// Split buffer for binary operation: left input, right input, and result.
-    /// Used for Sum and Product operations.
-    fn binary_split(self) -> (&'a mut [f64], &'a mut [f64], &'a mut [f64]) {
-        let third = self.buffer.len() / 3;
-        let (left, rest) = self.buffer.split_at_mut(third);
-        let (right, result) = rest.split_at_mut(third);
-        (left, right, result)
+impl<A> Sub<A> for DiffScalarScalar {
+    type Output = Diff<Self, A>;
+
+    fn sub(self, rhs: A) -> Self::Output {
+        Diff(self, rhs)
     }
+}
 
-    /// Split buffer for binary operation with intermediate storage.
-    /// Used for Diff operations that need temporary space for negation.
-    fn binary_with_temp(self) -> (&'a mut [f64], &'a mut [f64], &'a mut [f64], &'a mut [f64]) {
-        let quarter = self.buffer.len() / 4;
-        let (a, rest) = self.buffer.split_at_mut(quarter);
-        let (b, rest) = rest.split_at_mut(quarter);
-        let (temp, result) = rest.split_at_mut(quarter);
-        (a, b, temp, result)
+impl<A> Mul<A> for DiffScalarScalar {
+    type Output = Product<Self, A>;
+
+    fn mul(self, rhs: A) -> Self::Output {
+        Product(self, rhs)
+    }
+}
+
+impl Neg for DiffScalarScalar {
+    type Output = Negate<Self>;
+
+    fn neg(self) -> Self::Output {
+        Negate(self)
     }
 }
 
@@ -494,6 +567,27 @@ fn expansion_sum_stack(lhs: &[f64], rhs: &[f64], output: &mut [f64]) -> usize {
     result_len
 }
 
+fn with_stack_f64<R>(len: usize, f: impl FnOnce(&mut [f64]) -> R) -> R {
+    use std::{mem, slice};
+
+    if len == 0 {
+        let mut empty: [f64; 0] = [];
+        return f(&mut empty);
+    }
+
+    let align = mem::align_of::<f64>();
+    let bytes = len * mem::size_of::<f64>() + align;
+
+    with_alloca_zeroed(bytes, |raw| {
+        let ptr = raw.as_mut_ptr();
+        let addr = ptr as usize;
+        let offset = (align - (addr % align)) % align;
+        let aligned = unsafe { ptr.add(offset) };
+        let slice = unsafe { slice::from_raw_parts_mut(aligned as *mut f64, len) };
+        f(slice)
+    })
+}
+
 /// Stack-allocated version of grow_expansion_zeroelim
 fn grow_expansion_zeroelim_stack(expansion: &[f64], component: f64, output: &mut [f64]) -> usize {
     debug_assert!(!component.is_nan(), "NaN components are not supported");
@@ -522,57 +616,37 @@ fn grow_expansion_zeroelim_stack(expansion: &[f64], component: f64, output: &mut
 
 /// Stack-allocated version of expansion_product
 fn expansion_product_stack(lhs: &[f64], rhs: &[f64], output: &mut [f64]) -> usize {
-    if lhs.is_empty() || rhs.is_empty() {
+    if lhs.is_empty() || rhs.is_empty() || output.is_empty() {
         return 0;
     }
 
-    // We need intermediate buffers for the computation
-    // Split the output buffer into regions for current result and scratch space
-    let total_len = output.len();
-    if total_len < 32 {
-        // Fallback to heap version for very small buffers
-        let result = expansion_product(lhs, rhs);
-        let len = result.len().min(total_len);
-        output[..len].copy_from_slice(&result[..len]);
-        return len;
-    }
+    let max_needed = lhs.len().saturating_mul(rhs.len());
+    debug_assert!(
+        output.len() >= max_needed,
+        "output buffer too small for expansion product"
+    );
 
-    // Use first half for current result accumulation, second half for scratch
-    let mid = total_len / 2;
-    let (result_buf, scratch_buf) = output.split_at_mut(mid);
+    let scaled_cap = lhs.len() * 2;
+    let scratch_total = scaled_cap + output.len();
 
-    // Initialize result as empty
-    let mut result_len = 0;
+    with_stack_f64(scratch_total, |scratch| {
+        let (scaled_buf, sum_buf) = scratch.split_at_mut(scaled_cap);
+        let mut result_len = 0usize;
 
-    for &component in rhs {
-        if result_len >= mid {
-            // Buffer overflow, fallback to heap version
-            let result = expansion_product(lhs, rhs);
-            let len = result.len().min(total_len);
-            output[..len].copy_from_slice(&result[..len]);
-            return len;
+        for &component in rhs {
+            let scaled_len = scale_expansion_stack(lhs, component, scaled_buf);
+            if scaled_len == 0 {
+                continue;
+            }
+
+            let temp_len =
+                expansion_sum_stack(&output[..result_len], &scaled_buf[..scaled_len], sum_buf);
+            output[..temp_len].copy_from_slice(&sum_buf[..temp_len]);
+            result_len = temp_len.min(output.len());
         }
 
-        // Scale lhs by component into scratch buffer
-        let scaled_len = scale_expansion_stack(lhs, component, scratch_buf);
-
-        if scaled_len == 0 {
-            continue;
-        }
-
-        // Add scaled result to current result
-        // Split result_buf into current result and destination for sum
-        let (current_result, dest) = result_buf.split_at_mut(result_len);
-        let temp_len = expansion_sum_stack(current_result, &scratch_buf[0..scaled_len], dest);
-        result_len += temp_len;
-
-        // Cap at buffer size
-        if result_len > mid {
-            result_len = mid;
-        }
-    }
-
-    result_len
+        result_len
+    })
 }
 
 /// Stack-allocated version of scale_expansion
@@ -658,12 +732,8 @@ pub fn orient2d_adaptive(a: Coord, b: Coord, c: Coord) -> Option<Ordering> {
 }
 
 pub fn orient2d_exact(a: Coord, b: Coord, c: Coord) -> Option<Ordering> {
-    // Allocate a fixed-size buffer on the stack for expansion arithmetic
-    // The buffer needs to be large enough for the expression tree evaluation
-    // For orient2d, we have operations like: (ax - cx) * (by - cy) - (ay - cy) * (bx - cx)
-    // This involves multiple levels of operations, so we need sufficient space
-    const BUFFER_SIZE: usize = 512; // Keep full size for complex cases
-    let mut buffer: [f64; BUFFER_SIZE] = [0.0; BUFFER_SIZE];
+    const BUFFER_SIZE: usize = 512;
+    let mut buffer = MaybeUninit::<[f64; BUFFER_SIZE]>::uninit();
 
     let ax = Scalar(a.x);
     let ay = Scalar(a.y);
@@ -673,13 +743,26 @@ pub fn orient2d_exact(a: Coord, b: Coord, c: Coord) -> Option<Ordering> {
     let cy = Scalar(c.y);
 
     let det = (ax - cx) * (by - cy) - (ay - cy) * (bx - cx);
-    // signum computes the exact sign of the determinant.
-    let sign = det.signum(&mut buffer);
+    debug_assert!(det.stack_len() <= BUFFER_SIZE);
+    let sign = det.signum(unsafe { &mut *buffer.as_mut_ptr() });
     match sign {
         1 => Some(Ordering::Greater),
         -1 => Some(Ordering::Less),
         0 => Some(Ordering::Equal),
         _ => unreachable!(),
+    }
+}
+
+/// Reference wrapper that forwards to the `geometry_predicates` crate.
+/// Useful for benchmarking and inspecting the code generation of the upstream implementation.
+pub fn orient2d_geometry_predicates(a: Coord, b: Coord, c: Coord) -> Ordering {
+    let det = gp_orient2d([a.x, a.y], [b.x, b.y], [c.x, c.y]);
+    if det > 0.0 {
+        Ordering::Greater
+    } else if det < 0.0 {
+        Ordering::Less
+    } else {
+        Ordering::Equal
     }
 }
 

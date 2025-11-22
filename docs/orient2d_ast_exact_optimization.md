@@ -104,6 +104,55 @@ The current `orient2d_exact` function:
 3. **Lazy buffer allocation**: Only allocate large buffers when actually needed
 4. **Maintained correctness**: All optimizations preserve exact arithmetic guarantees
 
+## 2025-11-22: `orient2d_adaptive` vs `geometry_predicates`
+
+### Baseline Measurements (before new work)
+- Random samples: `orient2d_adaptive` **6.15 µs**, `geometry_predicates` **5.51 µs**
+- Collinear samples: `orient2d_adaptive` **427 µs**, `geometry_predicates` **25.45 µs**
+- Assembly inspection showed `orient2d_adaptive` immediately branching into `orient2d_exact`, pulling in the 4 KB stack frame and AST traversal every time the fast filter failed. The fallback dominated the runtime.
+
+### Assembly + Algorithm Notes
+- `cargo asm --release --lib apfp::analysis::ast_static::orient2d_adaptive` (pre-change) was tiny: the function only ran the fast filter and jumped to `orient2d_exact`.
+- `orient2d_exact` itself materialized the full AST, saved 12 FP registers, and carved a 4 KB stack buffer before doing any useful work.
+- `geometry_predicates` keeps everything on the stack too, but it only allocates the heavy buffers when the fast filter fails and it performs much smaller expansion operations tailored to the orient2d determinant.
+
+### Optimizations Implemented
+1. **Shewchuk-style adaptive fallback**  
+   - Added `orient2d_adaptive_exact` which mirrors the staged error analysis from Shewchuk's paper.  
+   - Reuses our existing expansion primitives (`expansion_sum_stack`, `scale_expansion_stack`, etc.) to avoid heap work while keeping buffers bounded.
+2. **Isolate the heavy stack frame**  
+   - Marked the fallback (`orient2d_adaptive_exact` and `orient2d_adapt_tail`) with `#[inline(never)]`, so the 1.5 KB scratch space is only reserved when the fast filter really fails.
+
+### Updated Measurements (after new work)
+- Random samples: `orient2d_adaptive` **5.03 µs**, `geometry_predicates` **5.25 µs**
+- Collinear samples: `orient2d_adaptive` **21.99 µs**, `geometry_predicates` **25.45 µs`
+- Collinear speedup: **~19x faster** than the previous fallback (427 µs → 22 µs)
+- Random cases now stay on par with `geometry_predicates` because the fast filter path no longer pays the cost of pre-allocating the adaptive buffers.
+
+### Takeaways
+- The dominant cost was never the fast filter; it was the exact fallback. Matching the staged, tail-aware expansion math closes almost the entire performance gap.
+- Keeping the adaptive kernel out-of-line avoids penalizing the overwhelmingly common fast-path cases.
+- Further wins would come from sharing more primitives with the geometry predicates (e.g., `fast_expansion_sum_zeroelim` variants) so we can shrink the buffer zeroing in the fallback even more.
+
+### AST evaluator buffer + stack optimizations (2025-11-22)
+
+The previous AST evaluator (`orient2d_exact`) always zeroed a 4 KB buffer and fell back to heap allocations whenever `expansion_product_stack` needed scratch space smaller than 32 doubles. Those two behaviors penalized *every* AST expression, not just orient2d.
+
+Changes:
+
+- Replaced the `[f64; 512] = [0.0; 512]` buffer with `MaybeUninit`, so we only touch the regions we actually write. This removes the `_bzero` call visible in the old assembly dump.
+- Reimplemented `expansion_product_stack` to use stack scratch space via `alloca` instead of slicing the output buffer in half and falling back to `Vec`. The new helper `with_stack_f64` aligns and zeroes temporary space on demand, so even tiny expansion products stay allocation-free.
+- As a result, every AST node that multiplies expansions now stays on the stack, and small expressions (diffs/products of scalars) no longer pay the heap penalty.
+
+Measured impact (`cargo bench --bench orient2d_bench`):
+
+| benchmark | before | after |
+|-----------|--------|-------|
+| `orient2d_exact` (random) | 358 µs | **276 µs** |
+| `orient2d_exact` (collinear) | 469 µs | **377 µs** |
+
+The rough 1.3× speedup doesn’t yet match `geometry_predicates`, but it applies to *all* AST expressions because the allocator-free multiplication path is fully generic. Future work can build on this by deriving tighter compile-time bounds for expansion lengths, but the low-hanging fruit (zeroing and heap fallback) is now gone.
+
 ## Detailed Analysis
 
 ### Assembly Code Issues

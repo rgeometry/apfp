@@ -21,6 +21,9 @@ robust = "1.2.0"
 geometry-predicates = "0.3"
 criterion = "0.7.0"
 
+[patch.crates-io]
+geometry-predicates = { path = "vendor/geometry-predicates" }
+
 [[bench]]
 name = "orient2d_bench"
 harness = false

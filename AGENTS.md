@@ -27,6 +27,9 @@
 ## Commit & Pull Request Guidelines
 - Use concise, descriptive commit messages in lowercase semantic style (`feat: add geometry predicates`, `fix: handle orient2d edge case`).
 - PRs should link relevant issues, describe major changes, and note test/benchmark results (`cargo test`, `cargo bench`). Screenshots unnecessary unless UI-affecting docs/assets are added.
+- Use the `gh` tool to open PRs: `gh pr create --title "feat: your feature description" --body "Description of changes..."`.
+- **Never use `git commit --no-verify`**: Pre-commit verification (hooks) is mandatory for code quality and consistency.
+- **All commits must be signed**: Use `git commit -S` or configure `commit.gpgSign = true` for commit authentication.
 
 ## Additional Tips
 - Benchmarks depend on Criterion 0.5; keep sample sizes reasonable to preserve runtime in CI.

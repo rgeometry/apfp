@@ -4,6 +4,8 @@ pub mod ap64_fixed;
 pub mod expansion;
 pub mod geometry;
 
+pub use apfp_signum_macro::apfp_signum;
+
 pub use analysis::orient2d_rational;
 pub use ap64::Ap64;
 pub use ap64_fixed::{Ap64Fixed, FixedExpansionOverflow};

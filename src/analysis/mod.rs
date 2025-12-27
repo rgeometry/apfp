@@ -3,10 +3,12 @@
 
 // Public modules
 pub mod ast_static;
+pub mod adaptive_signum;
 
 // Re-export the AST-based implementations
 pub use ast_static::{
-    orient2d_adaptive, orient2d_direct, orient2d_geometry_predicates, orient2d_rational,
+    cmp_dist_macro, orient2d_adaptive, orient2d_direct, orient2d_geometry_predicates,
+    orient2d_macro, orient2d_macro_adaptive, orient2d_rational,
 };
 
 use crate::geometry::{Coord, GeometryPredicateResult};
@@ -25,6 +27,7 @@ const GAMMA11: f64 = (11.0 * U) / (1.0 - 11.0 * U);
 
 /// Fast floating-point filter for orient2d that returns None when the result
 /// is too close to zero to trust its sign.
+#[inline(always)]
 pub fn orient2d_fast(a: Coord, b: Coord, c: Coord) -> Option<GeometryPredicateResult> {
     let ax = a.x;
     let ay = a.y;
@@ -38,8 +41,10 @@ pub fn orient2d_fast(a: Coord, b: Coord, c: Coord) -> Option<GeometryPredicateRe
     let ady = ay - cy;
     let bdy = by - cy;
 
-    let det = adx * bdy - ady * bdx;
-    let detsum = (adx * bdy).abs() + (ady * bdx).abs();
+    let prod1 = adx * bdy;
+    let prod2 = ady * bdx;
+    let det = prod1 - prod2;
+    let detsum = prod1.abs() + prod2.abs();
 
     let errbound = GAMMA7 * detsum;
     if det > errbound {

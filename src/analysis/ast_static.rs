@@ -1,5 +1,6 @@
 use crate::geometry::Coord;
-use alloca::with_alloca_zeroed;
+use crate::apfp_signum;
+use alloca::with_alloca;
 use geometry_predicates::orient2d as gp_orient2d;
 use num_rational::BigRational;
 use std::{
@@ -8,26 +9,28 @@ use std::{
     ops::{Add, Mul, Neg, Sub},
 };
 
-use crate::expansion::two_sum;
+use crate::expansion::{fast_two_sum, two_sum};
 
 #[derive(Debug, Clone, Copy)]
-struct Scalar(f64);
-struct Negate<T>(T);
-struct Square<T>(T);
+pub(crate) struct Scalar(f64);
+pub(crate) struct Negate<T>(T);
+pub(crate) struct Square<T>(T);
 
-struct Sum<A, B>(A, B);
-struct Product<A, B>(A, B);
+pub(crate) struct Sum<A, B>(A, B);
+pub(crate) struct Product<A, B>(A, B);
 
-struct Diff<A, B>(A, B);
+pub(crate) struct Diff<A, B>(A, B);
 
 #[derive(Debug, Clone, Copy)]
-struct DiffScalarScalar(Scalar, Scalar);
+pub(crate) struct DiffScalarScalar(Scalar, Scalar);
 
 impl DiffScalarScalar {
     fn new(lhs: Scalar, rhs: Scalar) -> Self {
         Self(lhs, rhs)
     }
 }
+
+
 
 impl<A: Eval + OperationCount, B: Eval + OperationCount> Diff<A, B> {
     fn eval_bounded(&self, variables: &[f64]) -> (f64, f64) {
@@ -161,7 +164,7 @@ macro_rules! impl_eval {
     };
 }
 
-trait Eval {
+pub(crate) trait Eval {
     fn eval(&self, variables: &[f64]) -> f64;
 }
 
@@ -170,6 +173,7 @@ impl Eval for Scalar {
         self.0
     }
 }
+
 
 impl Signum for Scalar {
     const MAX_LEN: usize = 1;
@@ -200,6 +204,7 @@ impl Eval for f64 {
     }
 }
 
+
 impl Signum for f64 {
     const MAX_LEN: usize = 1;
     const STACK_LEN: usize = 1;
@@ -222,6 +227,7 @@ impl ToRational for f64 {
 
 impl_eval!(Negate[a] => -a);
 impl_eval!(Square[a] => a.powi(2));
+
 
 impl<T: Signum> Signum for Negate<T> {
     const MAX_LEN: usize = T::MAX_LEN;
@@ -276,11 +282,13 @@ impl_eval!(Sum[a, b] => a + b);
 impl_eval!(Diff[a, b] => a - b);
 impl_eval!(Product[a, b] => a * b);
 
+
 impl Eval for DiffScalarScalar {
     fn eval(&self, _variables: &[f64]) -> f64 {
         self.0.eval(&[]) - self.1.eval(&[])
     }
 }
+
 
 impl<A: Signum, B: Signum> Signum for Sum<A, B> {
     const MAX_LEN: usize = A::MAX_LEN + B::MAX_LEN;
@@ -351,17 +359,24 @@ impl<A: ToRational, B: ToRational> ToRational for Diff<A, B> {
 
 impl<A: Signum, B: Signum> Signum for Product<A, B> {
     const MAX_LEN: usize = 2 * A::MAX_LEN * B::MAX_LEN;
-    const STACK_LEN: usize = A::STACK_LEN + B::STACK_LEN + Self::MAX_LEN;
+    const STACK_LEN: usize =
+        A::STACK_LEN + B::STACK_LEN + Self::MAX_LEN + (2 * A::MAX_LEN + Self::MAX_LEN);
 
     fn eval_exact<'a>(&self, buffer: &'a mut [f64]) -> &'a [f64] {
         let (left_buf, rest) = buffer.split_at_mut(A::STACK_LEN);
         let (right_buf, rest) = rest.split_at_mut(B::STACK_LEN);
-        let (result_buf, _) = rest.split_at_mut(Self::MAX_LEN);
+        let (result_buf, scratch) = rest.split_at_mut(Self::MAX_LEN);
 
         let left_exp = self.0.eval_exact(left_buf);
         let right_exp = self.1.eval_exact(right_buf);
 
-        let result_len = expansion_product_stack(left_exp, right_exp, result_buf);
+        let result_len = expansion_product_stack_with_scratch(
+            left_exp,
+            right_exp,
+            result_buf,
+            scratch,
+            A::MAX_LEN,
+        );
         &result_buf[..result_len]
     }
 
@@ -430,13 +445,13 @@ macro_rules! impl_operation_count {
     };
 }
 
-trait OperationCount {
+pub(crate) trait OperationCount {
     const OPERATION_COUNT: usize;
 }
 
 /// Trait for exact arithmetic evaluation of expression signs.
 /// Provides two methods: eval_exact for computing full expansions, and signum for optimized sign computation.
-trait Signum {
+pub(crate) trait Signum {
     const MAX_LEN: usize;
     const STACK_LEN: usize;
     /// Compute the exact expansion of this expression.
@@ -451,15 +466,52 @@ trait Signum {
     fn stack_len(&self) -> usize {
         Self::STACK_LEN
     }
+
+    #[inline(always)]
+    #[allow(dead_code)]
+    fn signum_stack(&self) -> i32 {
+        with_stack_f64(Self::STACK_LEN, |buffer| self.signum(buffer))
+    }
 }
 
 /// Compute sign of expansionA - expansionB by directly comparing values.
 /// This avoids redundant sign computations in the common case.
 fn expansion_diff_signum_direct(a: &[f64], b: &[f64]) -> i32 {
-    // Compute a - b directly by summing and comparing
-    let a_val: f64 = a.iter().sum();
-    let b_val: f64 = b.iter().sum();
-    (a_val - b_val).signum() as i32
+    let mut i = a.len();
+    let mut j = b.len();
+
+    loop {
+        while i > 0 && a[i - 1] == 0.0 {
+            i -= 1;
+        }
+        while j > 0 && b[j - 1] == 0.0 {
+            j -= 1;
+        }
+
+        if i == 0 && j == 0 {
+            return 0;
+        }
+        if i == 0 {
+            let b_val = b[j - 1];
+            return if b_val > 0.0 { -1 } else { 1 };
+        }
+        if j == 0 {
+            let a_val = a[i - 1];
+            return if a_val > 0.0 { 1 } else { -1 };
+        }
+
+        let a_val = a[i - 1];
+        let b_val = b[j - 1];
+        if a_val > b_val {
+            return 1;
+        }
+        if a_val < b_val {
+            return -1;
+        }
+
+        i -= 1;
+        j -= 1;
+    }
 }
 
 /// Trait for evaluating expressions to exact rational numbers.
@@ -529,42 +581,82 @@ fn expansion_sum_stack(lhs: &[f64], rhs: &[f64], output: &mut [f64]) -> usize {
         return lhs.len();
     }
 
-    let mut result_len = 0;
-    let mut i = 0;
-    let mut j = 0;
+    let mut enow = lhs[0];
+    let mut fnow = rhs[0];
+    let mut eindex = 0usize;
+    let mut findex = 0usize;
+    let mut hindex = 0usize;
 
-    while i < lhs.len() && j < rhs.len() {
-        let take_lhs = match lhs[i].abs().partial_cmp(&rhs[j].abs()) {
-            Some(Ordering::Less) => true,
-            Some(Ordering::Equal) => true,
-            Some(Ordering::Greater) => false,
-            None => true,
-        };
+    let mut q = if (fnow > enow) == (fnow > -enow) {
+        eindex += 1;
+        enow
+    } else {
+        findex += 1;
+        fnow
+    };
 
-        if take_lhs {
-            let (current, rest) = output.split_at_mut(result_len);
-            result_len = grow_expansion_zeroelim_stack(current, lhs[i], rest);
-            i += 1;
+    if eindex < lhs.len() && findex < rhs.len() {
+        enow = lhs[eindex];
+        fnow = rhs[findex];
+        let (qnew, hh) = if (fnow > enow) == (fnow > -enow) {
+            eindex += 1;
+            fast_two_sum(enow, q)
         } else {
-            let (current, rest) = output.split_at_mut(result_len);
-            result_len = grow_expansion_zeroelim_stack(current, rhs[j], rest);
-            j += 1;
+            findex += 1;
+            fast_two_sum(fnow, q)
+        };
+        q = qnew;
+        if hh != 0.0 {
+            output[hindex] = hh;
+            hindex += 1;
+        }
+
+        while eindex < lhs.len() && findex < rhs.len() {
+            enow = lhs[eindex];
+            fnow = rhs[findex];
+            let (qnew, hh) = if (fnow > enow) == (fnow > -enow) {
+                eindex += 1;
+                two_sum(q, enow)
+            } else {
+                findex += 1;
+                two_sum(q, fnow)
+            };
+            q = qnew;
+            if hh != 0.0 {
+                output[hindex] = hh;
+                hindex += 1;
+            }
         }
     }
 
-    while i < lhs.len() {
-        let (current, rest) = output.split_at_mut(result_len);
-        result_len = grow_expansion_zeroelim_stack(current, lhs[i], rest);
-        i += 1;
+    while eindex < lhs.len() {
+        enow = lhs[eindex];
+        let (qnew, hh) = two_sum(q, enow);
+        q = qnew;
+        eindex += 1;
+        if hh != 0.0 {
+            output[hindex] = hh;
+            hindex += 1;
+        }
     }
 
-    while j < rhs.len() {
-        let (current, rest) = output.split_at_mut(result_len);
-        result_len = grow_expansion_zeroelim_stack(current, rhs[j], rest);
-        j += 1;
+    while findex < rhs.len() {
+        fnow = rhs[findex];
+        let (qnew, hh) = two_sum(q, fnow);
+        q = qnew;
+        findex += 1;
+        if hh != 0.0 {
+            output[hindex] = hh;
+            hindex += 1;
+        }
     }
 
-    result_len
+    if q != 0.0 || hindex == 0 {
+        output[hindex] = q;
+        hindex += 1;
+    }
+
+    hindex
 }
 
 fn with_stack_f64<R>(len: usize, f: impl FnOnce(&mut [f64]) -> R) -> R {
@@ -578,8 +670,8 @@ fn with_stack_f64<R>(len: usize, f: impl FnOnce(&mut [f64]) -> R) -> R {
     let align = mem::align_of::<f64>();
     let bytes = len * mem::size_of::<f64>() + align;
 
-    with_alloca_zeroed(bytes, |raw| {
-        let ptr = raw.as_mut_ptr();
+    with_alloca(bytes, |raw| {
+        let ptr = raw.as_mut_ptr().cast::<u8>();
         let addr = ptr as usize;
         let offset = (align - (addr % align)) % align;
         let aligned = unsafe { ptr.add(offset) };
@@ -589,6 +681,7 @@ fn with_stack_f64<R>(len: usize, f: impl FnOnce(&mut [f64]) -> R) -> R {
 }
 
 /// Stack-allocated version of grow_expansion_zeroelim
+#[allow(dead_code)]
 fn grow_expansion_zeroelim_stack(expansion: &[f64], component: f64, output: &mut [f64]) -> usize {
     debug_assert!(!component.is_nan(), "NaN components are not supported");
 
@@ -615,38 +708,63 @@ fn grow_expansion_zeroelim_stack(expansion: &[f64], component: f64, output: &mut
 }
 
 /// Stack-allocated version of expansion_product
-fn expansion_product_stack(lhs: &[f64], rhs: &[f64], output: &mut [f64]) -> usize {
-    if lhs.is_empty() || rhs.is_empty() || output.is_empty() {
+fn expansion_product_stack_with_scratch(
+    lhs: &[f64],
+    rhs: &[f64],
+    output: &mut [f64],
+    scratch: &mut [f64],
+    lhs_max_len: usize,
+) -> usize {
+    let lhs_len = lhs.len();
+    let rhs_len = rhs.len();
+    if lhs_len == 0 || rhs_len == 0 || output.is_empty() {
         return 0;
     }
 
-    let max_needed = lhs.len().saturating_mul(rhs.len());
+    if lhs_len == 1 && rhs_len == 1 {
+        let (p1, p0) = crate::expansion::two_product(lhs[0], rhs[0]);
+        if p0 != 0.0 {
+            output[0] = p0;
+            output[1] = p1;
+            return 2;
+        }
+        output[0] = p1;
+        return 1;
+    }
+
+    if lhs_len == 1 {
+        return scale_expansion_stack(rhs, lhs[0], output);
+    }
+
+    if rhs_len == 1 {
+        return scale_expansion_stack(lhs, rhs[0], output);
+    }
+
+    let max_needed = lhs_len.saturating_mul(rhs_len);
     debug_assert!(
         output.len() >= max_needed,
         "output buffer too small for expansion product"
     );
 
-    let scaled_cap = lhs.len() * 2;
-    let scratch_total = scaled_cap + output.len();
+    let scaled_cap = lhs_max_len * 2;
+    let sum_cap = output.len();
+    let (scaled_buf, rest) = scratch.split_at_mut(scaled_cap);
+    let (sum_buf, _) = rest.split_at_mut(sum_cap);
+    let mut result_len = 0usize;
 
-    with_stack_f64(scratch_total, |scratch| {
-        let (scaled_buf, sum_buf) = scratch.split_at_mut(scaled_cap);
-        let mut result_len = 0usize;
-
-        for &component in rhs {
-            let scaled_len = scale_expansion_stack(lhs, component, scaled_buf);
-            if scaled_len == 0 {
-                continue;
-            }
-
-            let temp_len =
-                expansion_sum_stack(&output[..result_len], &scaled_buf[..scaled_len], sum_buf);
-            output[..temp_len].copy_from_slice(&sum_buf[..temp_len]);
-            result_len = temp_len.min(output.len());
+    for &component in rhs {
+        let scaled_len = scale_expansion_stack(lhs, component, scaled_buf);
+        if scaled_len == 0 {
+            continue;
         }
 
-        result_len
-    })
+        let temp_len =
+            expansion_sum_stack(&output[..result_len], &scaled_buf[..scaled_len], sum_buf);
+        output[..temp_len].copy_from_slice(&sum_buf[..temp_len]);
+        result_len = temp_len.min(output.len());
+    }
+
+    result_len
 }
 
 /// Stack-allocated version of scale_expansion
@@ -694,13 +812,18 @@ fn scale_expansion_stack(expansion: &[f64], scalar: f64, output: &mut [f64]) -> 
 
 /// Compute the sign of an expansion (sum of components)
 fn expansion_signum(expansion: &[f64]) -> i32 {
-    let mut sum = 0.0;
-    for &component in expansion {
-        sum += component;
+    let mut i = expansion.len();
+    while i > 0 {
+        let val = expansion[i - 1];
+        if val != 0.0 {
+            return val.signum() as i32;
+        }
+        i -= 1;
     }
-    sum.signum() as i32
+    0
 }
 
+#[inline(always)]
 pub fn orient2d_fast(a: Coord, b: Coord, c: Coord) -> Option<Ordering> {
     let ax = Scalar(a.x);
     let ay = Scalar(a.y);
@@ -751,6 +874,31 @@ pub fn orient2d_exact(a: Coord, b: Coord, c: Coord) -> Option<Ordering> {
         0 => Some(Ordering::Equal),
         _ => unreachable!(),
     }
+}
+
+/// Exact orientation using a Shewchuk-style 4-term expansion.
+#[inline(always)]
+pub fn orient2d_macro(a: Coord, b: Coord, c: Coord) -> Option<Ordering> {
+    let ax = a.x;
+    let ay = a.y;
+    let bx = b.x;
+    let by = b.y;
+    let cx = c.x;
+    let cy = c.y;
+
+    let sign = apfp_signum!((ax - cx) * (by - cy) - (ay - cy) * (bx - cx));
+    match sign {
+        1 => Some(Ordering::Greater),
+        -1 => Some(Ordering::Less),
+        0 => Some(Ordering::Equal),
+        _ => unreachable!(),
+    }
+}
+
+/// Fast filter followed by macro-built exact fallback.
+#[inline(always)]
+pub fn orient2d_macro_adaptive(a: Coord, b: Coord, c: Coord) -> Option<Ordering> {
+    orient2d_macro(a, b, c)
 }
 
 /// Reference wrapper that forwards to the `geometry_predicates` crate.
@@ -891,6 +1039,27 @@ pub fn cmp_dist_fast(origin: Coord, p: Coord, q: Coord) -> Option<Ordering> {
         Some(Ordering::Less)
     } else {
         None
+    }
+}
+
+/// Exact comparison of squared distances using the macro-built AST.
+pub fn cmp_dist_macro(origin: Coord, p: Coord, q: Coord) -> Option<Ordering> {
+    let ox = origin.x;
+    let oy = origin.y;
+    let px = p.x;
+    let py = p.y;
+    let qx = q.x;
+    let qy = q.y;
+
+    let sign = apfp_signum!(
+        (square(px - ox) + square(py - oy)) - (square(qx - ox) + square(qy - oy))
+    );
+
+    match sign {
+        1 => Some(Ordering::Greater),
+        -1 => Some(Ordering::Less),
+        0 => Some(Ordering::Equal),
+        _ => unreachable!(),
     }
 }
 

@@ -1,3 +1,5 @@
+extern crate self as apfp;
+
 pub mod analysis;
 pub mod ap64;
 pub mod ap64_fixed;

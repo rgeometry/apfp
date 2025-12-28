@@ -16,6 +16,7 @@
 //! ```rust
 //! # use apfp::{apfp_signum, Coord};
 //! # use apfp::analysis::adaptive_signum::square;
+//! # use apfp::analysis::adaptive_signum;
 //! let a = Coord::new(0.0, 0.0);
 //! let b = Coord::new(1.0, 0.0);
 //! let c = Coord::new(0.0, 1.0);

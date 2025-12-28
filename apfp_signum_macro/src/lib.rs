@@ -10,7 +10,7 @@ use syn::{
 pub fn apfp_signum(input: TokenStream) -> TokenStream {
     let expr = parse_macro_input!(input as Expr);
     let crate_path = match crate_name("apfp") {
-        Ok(FoundCrate::Itself) => quote!(crate),
+        Ok(FoundCrate::Itself) => quote!(::apfp),
         Ok(FoundCrate::Name(name)) => {
             let ident = syn::Ident::new(&name, proc_macro2::Span::call_site());
             quote!(::#ident)
@@ -18,7 +18,8 @@ pub fn apfp_signum(input: TokenStream) -> TokenStream {
         Err(_) => quote!(::apfp),
     };
     let mut builder = Builder::default();
-    match expand_expr(&expr, &crate_path, &mut builder) {
+    let module_path = quote!(_apfp_adaptive);
+    match expand_expr(&expr, &module_path, &mut builder) {
         Ok(expanded) => {
             let ExpandedExpr {
                 expr: expanded_expr,
@@ -30,16 +31,13 @@ pub fn apfp_signum(input: TokenStream) -> TokenStream {
             } = expanded;
             let gamma = gamma_from_ops(op_count);
             let mut dd_builder = Builder::default();
-            let dd_expanded = match expand_dd_expr(&expr, &mut dd_builder) {
+            let dd_expanded = match expand_dd_expr(&expr, &module_path, &mut dd_builder) {
                 Ok(tokens) => tokens,
                 Err(err) => return err.to_compile_error().into(),
             };
             TokenStream::from(quote! {
                 {
-                    use #crate_path::analysis::adaptive_signum::{
-                        dd_add, dd_from, dd_mul, dd_neg, dd_signum, dd_square, dd_sub, Scalar,
-                        signum_exact, square, Dd, Signum,
-                    };
+                    use #crate_path::analysis::adaptive_signum as _apfp_adaptive;
                     #stmts
                     let _apfp_value: f64 = #value;
                     let _apfp_abs: f64 = #abs;
@@ -50,15 +48,15 @@ pub fn apfp_signum(input: TokenStream) -> TokenStream {
                         -1
                     } else {
                         #dd_expanded
-                        if let Some(sign) = dd_signum(_apfp_dd_value) {
+                        if let Some(sign) = _apfp_adaptive::dd_signum(_apfp_dd_value) {
                             sign
                         } else {
                             type ExprType = #expr_type;
                             let expr: ExprType = #expanded_expr;
                             let mut buffer =
-                                core::mem::MaybeUninit::<[f64; <ExprType as Signum>::STACK_LEN]>::uninit();
+                                core::mem::MaybeUninit::<[f64; <ExprType as _apfp_adaptive::Signum>::STACK_LEN]>::uninit();
                             let buffer = unsafe { &mut *buffer.as_mut_ptr() };
-                            signum_exact(expr, buffer)
+                            _apfp_adaptive::signum_exact(expr, buffer)
                         }
                     }
                 }
@@ -84,14 +82,15 @@ struct ExpandedExpr {
 
 fn expand_dd_expr(
     expr: &Expr,
+    module_path: &proc_macro2::TokenStream,
     builder: &mut Builder,
 ) -> Result<proc_macro2::TokenStream, syn::Error> {
-    let expanded = expand_dd_expr_inner(expr, builder)?;
+    let expanded = expand_dd_expr_inner(expr, module_path, builder)?;
     let stmts = expanded.stmts;
     let value = expanded.value;
     Ok(quote! {
         #stmts
-        let _apfp_dd_value: Dd = #value;
+        let _apfp_dd_value: #module_path::Dd = #value;
     })
 }
 
@@ -100,20 +99,24 @@ struct ExpandedDd {
     stmts: proc_macro2::TokenStream,
 }
 
-fn expand_dd_expr_inner(expr: &Expr, builder: &mut Builder) -> Result<ExpandedDd, syn::Error> {
+fn expand_dd_expr_inner(
+    expr: &Expr,
+    module_path: &proc_macro2::TokenStream,
+    builder: &mut Builder,
+) -> Result<ExpandedDd, syn::Error> {
     match expr {
         Expr::Binary(ExprBinary { left, op, right, .. }) => {
-            let lhs = expand_dd_expr_inner(left, builder)?;
-            let rhs = expand_dd_expr_inner(right, builder)?;
+            let lhs = expand_dd_expr_inner(left, module_path, builder)?;
+            let rhs = expand_dd_expr_inner(right, module_path, builder)?;
             let lhs_value = lhs.value.clone();
             let rhs_value = rhs.value.clone();
             let lhs_stmts = lhs.stmts.clone();
             let rhs_stmts = rhs.stmts.clone();
             let value_ident = builder.next_ident("_apfp_dd");
             let op_call = match op {
-                syn::BinOp::Add(_) => quote! { dd_add(#lhs_value, #rhs_value) },
-                syn::BinOp::Sub(_) => quote! { dd_sub(#lhs_value, #rhs_value) },
-                syn::BinOp::Mul(_) => quote! { dd_mul(#lhs_value, #rhs_value) },
+                syn::BinOp::Add(_) => quote! { #module_path::dd_add(#lhs_value, #rhs_value) },
+                syn::BinOp::Sub(_) => quote! { #module_path::dd_sub(#lhs_value, #rhs_value) },
+                syn::BinOp::Mul(_) => quote! { #module_path::dd_mul(#lhs_value, #rhs_value) },
                 _ => {
                     return Err(syn::Error::new_spanned(
                         op,
@@ -126,12 +129,12 @@ fn expand_dd_expr_inner(expr: &Expr, builder: &mut Builder) -> Result<ExpandedDd
                 stmts: quote! {
                     #lhs_stmts
                     #rhs_stmts
-                    let #value_ident: Dd = #op_call;
+                    let #value_ident: #module_path::Dd = #op_call;
                 },
             })
         }
         Expr::Unary(ExprUnary { op: UnOp::Neg(_), expr, .. }) => {
-            let inner = expand_dd_expr_inner(expr, builder)?;
+            let inner = expand_dd_expr_inner(expr, module_path, builder)?;
             let value_ident = builder.next_ident("_apfp_dd");
             let inner_value = inner.value.clone();
             let inner_stmts = inner.stmts.clone();
@@ -139,16 +142,16 @@ fn expand_dd_expr_inner(expr: &Expr, builder: &mut Builder) -> Result<ExpandedDd
                 value: quote! { #value_ident },
                 stmts: quote! {
                     #inner_stmts
-                    let #value_ident: Dd = dd_neg(#inner_value);
+                    let #value_ident: #module_path::Dd = #module_path::dd_neg(#inner_value);
                 },
             })
         }
-        Expr::Paren(ExprParen { expr, .. }) => expand_dd_expr_inner(expr, builder),
-        Expr::Group(ExprGroup { expr, .. }) => expand_dd_expr_inner(expr, builder),
+        Expr::Paren(ExprParen { expr, .. }) => expand_dd_expr_inner(expr, module_path, builder),
+        Expr::Group(ExprGroup { expr, .. }) => expand_dd_expr_inner(expr, module_path, builder),
         Expr::Call(ExprCall { func, args, .. }) => {
             if let Expr::Path(ExprPath { path, .. }) = &**func {
                 if path.is_ident("square") && args.len() == 1 {
-                    let inner = expand_dd_expr_inner(&args[0], builder)?;
+                    let inner = expand_dd_expr_inner(&args[0], module_path, builder)?;
                     let value_ident = builder.next_ident("_apfp_dd");
                     let inner_value = inner.value.clone();
                     let inner_stmts = inner.stmts.clone();
@@ -156,7 +159,8 @@ fn expand_dd_expr_inner(expr: &Expr, builder: &mut Builder) -> Result<ExpandedDd
                         value: quote! { #value_ident },
                         stmts: quote! {
                             #inner_stmts
-                            let #value_ident: Dd = dd_square(#inner_value);
+                            let #value_ident: #module_path::Dd =
+                                #module_path::dd_square(#inner_value);
                         },
                     });
                 }
@@ -171,7 +175,7 @@ fn expand_dd_expr_inner(expr: &Expr, builder: &mut Builder) -> Result<ExpandedDd
             Ok(ExpandedDd {
                 value: quote! { #value_ident },
                 stmts: quote! {
-                    let #value_ident: Dd = dd_from((#expr) as f64);
+                    let #value_ident: #module_path::Dd = #module_path::dd_from((#expr) as f64);
                 },
             })
         }
@@ -203,13 +207,13 @@ impl Builder {
 
 fn expand_expr(
     expr: &Expr,
-    crate_path: &proc_macro2::TokenStream,
+    module_path: &proc_macro2::TokenStream,
     builder: &mut Builder,
 ) -> Result<ExpandedExpr, syn::Error> {
     match expr {
         Expr::Binary(ExprBinary { left, op, right, .. }) => {
-            let lhs = expand_expr(left, crate_path, builder)?;
-            let rhs = expand_expr(right, crate_path, builder)?;
+            let lhs = expand_expr(left, module_path, builder)?;
+            let rhs = expand_expr(right, module_path, builder)?;
             let lhs_expr = lhs.expr.clone();
             let rhs_expr = rhs.expr.clone();
             let lhs_ty = lhs.ty.clone();
@@ -225,15 +229,15 @@ fn expand_expr(
             let (out_expr, out_ty) = match op {
                 syn::BinOp::Add(_) => (
                     quote! { (#lhs_expr) + (#rhs_expr) },
-                    quote! { #crate_path::analysis::adaptive_signum::Sum<#lhs_ty, #rhs_ty> },
+                    quote! { #module_path::Sum<#lhs_ty, #rhs_ty> },
                 ),
                 syn::BinOp::Sub(_) => (
                     quote! { (#lhs_expr) - (#rhs_expr) },
-                    quote! { #crate_path::analysis::adaptive_signum::Diff<#lhs_ty, #rhs_ty> },
+                    quote! { #module_path::Diff<#lhs_ty, #rhs_ty> },
                 ),
                 syn::BinOp::Mul(_) => (
                     quote! { (#lhs_expr) * (#rhs_expr) },
-                    quote! { #crate_path::analysis::adaptive_signum::Product<#lhs_ty, #rhs_ty> },
+                    quote! { #module_path::Product<#lhs_ty, #rhs_ty> },
                 ),
                 _ => {
                     return Err(syn::Error::new_spanned(
@@ -271,7 +275,7 @@ fn expand_expr(
             })
         }
         Expr::Unary(ExprUnary { op: UnOp::Neg(_), expr, .. }) => {
-            let inner = expand_expr(expr, crate_path, builder)?;
+            let inner = expand_expr(expr, module_path, builder)?;
             let value_ident = builder.next_ident("_apfp_v");
             let abs_ident = builder.next_ident("_apfp_abs");
             let inner_expr = inner.expr.clone();
@@ -281,7 +285,7 @@ fn expand_expr(
             let inner_stmts = inner.stmts.clone();
             Ok(ExpandedExpr {
                 expr: quote! { -(#inner_expr) },
-                ty: quote! { #crate_path::analysis::adaptive_signum::Negate<#inner_ty> },
+                ty: quote! { #module_path::Negate<#inner_ty> },
                 value: quote! { #value_ident },
                 abs: quote! { #abs_ident },
                 stmts: quote! {
@@ -292,12 +296,12 @@ fn expand_expr(
                 op_count: inner.op_count,
             })
         }
-        Expr::Paren(ExprParen { expr, .. }) => expand_expr(expr, crate_path, builder),
-        Expr::Group(ExprGroup { expr, .. }) => expand_expr(expr, crate_path, builder),
+        Expr::Paren(ExprParen { expr, .. }) => expand_expr(expr, module_path, builder),
+        Expr::Group(ExprGroup { expr, .. }) => expand_expr(expr, module_path, builder),
         Expr::Call(ExprCall { func, args, .. }) => {
             if let Expr::Path(ExprPath { path, .. }) = &**func {
                 if path.is_ident("square") && args.len() == 1 {
-                    let inner = expand_expr(&args[0], crate_path, builder)?;
+                    let inner = expand_expr(&args[0], module_path, builder)?;
                     let value_ident = builder.next_ident("_apfp_v");
                     let abs_ident = builder.next_ident("_apfp_abs");
                     let inner_expr = inner.expr.clone();
@@ -305,8 +309,8 @@ fn expand_expr(
                     let inner_value = inner.value.clone();
                     let inner_stmts = inner.stmts.clone();
                     return Ok(ExpandedExpr {
-                        expr: quote! { square(#inner_expr) },
-                        ty: quote! { #crate_path::analysis::adaptive_signum::Square<#inner_ty> },
+                        expr: quote! { #module_path::square(#inner_expr) },
+                        ty: quote! { #module_path::Square<#inner_ty> },
                         value: quote! { #value_ident },
                         abs: quote! { #abs_ident },
                         stmts: quote! {
@@ -327,8 +331,8 @@ fn expand_expr(
             let value_ident = builder.next_ident("_apfp_v");
             let abs_ident = builder.next_ident("_apfp_abs");
             Ok(ExpandedExpr {
-                expr: quote! { Scalar(#expr) },
-                ty: quote! { #crate_path::analysis::adaptive_signum::Scalar },
+                expr: quote! { #module_path::Scalar(#expr) },
+                ty: quote! { #module_path::Scalar },
                 value: quote! { #value_ident },
                 abs: quote! { #abs_ident },
                 stmts: quote! {

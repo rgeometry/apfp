@@ -1,8 +1,6 @@
-use apfp::{Coord, GeometryPredicateResult, incircle, orient2d};
+use apfp::analysis::adaptive_signum::{Dd, dd_add, dd_from, dd_mul, dd_signum, dd_square, dd_sub};
 use apfp::apfp_signum;
-use apfp::analysis::adaptive_signum::{
-    dd_add, dd_from, dd_mul, dd_signum, dd_square, dd_sub, Dd,
-};
+use apfp::{Coord, GeometryPredicateResult, incircle, orient2d};
 use geometry_predicates::orient2d as gp_orient2d;
 use ntest::timeout;
 use num_rational::BigRational;
@@ -15,8 +13,8 @@ const QC_MAX_TESTS: u64 = 20_000;
 const QC_STAGE_TESTS: u64 = 200;
 
 const EPS_LIST: [f64; 12] = [
-    1.0e-2, 1.0e-4, 1.0e-6, 1.0e-8, 1.0e-10, 1.0e-12, 1.0e-14, 1.0e-16, 1.0e-18, 1.0e-20,
-    1.0e-24, 1.0e-30,
+    1.0e-2, 1.0e-4, 1.0e-6, 1.0e-8, 1.0e-10, 1.0e-12, 1.0e-14, 1.0e-16, 1.0e-18, 1.0e-20, 1.0e-24,
+    1.0e-30,
 ];
 
 const LCG_A: u64 = 6364136223846793005;
@@ -272,9 +270,11 @@ fn apfp_signum_square_regression() {
     let x = 1.0e6_f64 + 1.0e-3;
     let y = 1.0e6_f64 - 1.0e-3;
     let apfp = apfp_signum!(square(x) - square(y));
-    let Some(rational) =
-        cmp_dist_rational(&Coord::new(0.0, 0.0), &Coord::new(x, 0.0), &Coord::new(y, 0.0))
-    else {
+    let Some(rational) = cmp_dist_rational(
+        &Coord::new(0.0, 0.0),
+        &Coord::new(x, 0.0),
+        &Coord::new(y, 0.0),
+    ) else {
         panic!("expected finite rational");
     };
     assert_eq!(apfp, rational);

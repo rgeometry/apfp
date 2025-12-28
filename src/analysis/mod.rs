@@ -2,8 +2,8 @@
 //! statically-derived error bound and an exact fallback.
 
 // Public modules
-pub mod ast_static;
 pub mod adaptive_signum;
+pub mod ast_static;
 
 // Re-export the AST-based implementations
 pub use ast_static::{

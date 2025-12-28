@@ -1,5 +1,5 @@
-use crate::geometry::Coord;
 use crate::apfp_signum;
+use crate::geometry::Coord;
 use alloca::with_alloca;
 use geometry_predicates::orient2d as gp_orient2d;
 use num_rational::BigRational;
@@ -29,8 +29,6 @@ impl DiffScalarScalar {
         Self(lhs, rhs)
     }
 }
-
-
 
 impl<A: Eval + OperationCount, B: Eval + OperationCount> Diff<A, B> {
     fn eval_bounded(&self, variables: &[f64]) -> (f64, f64) {
@@ -174,7 +172,6 @@ impl Eval for Scalar {
     }
 }
 
-
 impl Signum for Scalar {
     const MAX_LEN: usize = 1;
     const STACK_LEN: usize = 1;
@@ -204,7 +201,6 @@ impl Eval for f64 {
     }
 }
 
-
 impl Signum for f64 {
     const MAX_LEN: usize = 1;
     const STACK_LEN: usize = 1;
@@ -227,7 +223,6 @@ impl ToRational for f64 {
 
 impl_eval!(Negate[a] => -a);
 impl_eval!(Square[a] => a.powi(2));
-
 
 impl<T: Signum> Signum for Negate<T> {
     const MAX_LEN: usize = T::MAX_LEN;
@@ -282,13 +277,11 @@ impl_eval!(Sum[a, b] => a + b);
 impl_eval!(Diff[a, b] => a - b);
 impl_eval!(Product[a, b] => a * b);
 
-
 impl Eval for DiffScalarScalar {
     fn eval(&self, _variables: &[f64]) -> f64 {
         self.0.eval(&[]) - self.1.eval(&[])
     }
 }
-
 
 impl<A: Signum, B: Signum> Signum for Sum<A, B> {
     const MAX_LEN: usize = A::MAX_LEN + B::MAX_LEN;
@@ -1051,9 +1044,8 @@ pub fn cmp_dist_macro(origin: Coord, p: Coord, q: Coord) -> Option<Ordering> {
     let qx = q.x;
     let qy = q.y;
 
-    let sign = apfp_signum!(
-        (square(px - ox) + square(py - oy)) - (square(qx - ox) + square(qy - oy))
-    );
+    let sign =
+        apfp_signum!((square(px - ox) + square(py - oy)) - (square(qx - ox) + square(qy - oy)));
 
     match sign {
         1 => Some(Ordering::Greater),

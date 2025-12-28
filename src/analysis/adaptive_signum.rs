@@ -655,14 +655,14 @@ fn expansion_product_stack_with_scratch(
             continue;
         }
 
-        let temp_len = expansion_sum_stack(&output[..result_len], &scaled_buf[..scaled_len], sum_buf);
+        let temp_len =
+            expansion_sum_stack(&output[..result_len], &scaled_buf[..scaled_len], sum_buf);
         output[..temp_len].copy_from_slice(&sum_buf[..temp_len]);
         result_len = temp_len.min(output.len());
     }
 
     result_len
 }
-
 
 #[inline(always)]
 fn expansion_signum(expansion: &[f64]) -> i32 {
@@ -733,8 +733,9 @@ mod tests {
         let diff_exp = diff.eval_exact(&mut diff_buf);
 
         let mut expected = [0.0_f64; <Square<Diff<Scalar, Scalar>> as Signum>::MAX_LEN];
-        let mut scratch = [0.0_f64; 2 * <Diff<Scalar, Scalar> as Signum>::MAX_LEN
-            + <Square<Diff<Scalar, Scalar>> as Signum>::MAX_LEN];
+        let mut scratch = [0.0_f64;
+            2 * <Diff<Scalar, Scalar> as Signum>::MAX_LEN
+                + <Square<Diff<Scalar, Scalar>> as Signum>::MAX_LEN];
         let expected_len = expansion_product_stack_with_scratch(
             diff_exp,
             diff_exp,

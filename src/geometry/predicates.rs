@@ -36,3 +36,27 @@ pub fn cmp_dist(origin: &Coord, p: &Coord, q: &Coord) -> Ordering {
         _ => unreachable!(),
     }
 }
+
+/// Compute whether point d lies inside the circumcircle of triangle abc.
+/// Returns Positive if inside, Negative if outside, Zero if on the circle.
+pub fn incircle(a: &Coord, b: &Coord, c: &Coord, d: &Coord) -> GeometryPredicateResult {
+    let adx = a.x - d.x;
+    let ady = a.y - d.y;
+    let bdx = b.x - d.x;
+    let bdy = b.y - d.y;
+    let cdx = c.x - d.x;
+    let cdy = c.y - d.y;
+
+    let det = apfp_signum!(
+        adx * (bdy * (square(cdx) + square(cdy)) - cdy * (square(bdx) + square(bdy)))
+            + ady * (cdx * (square(bdx) + square(bdy)) - bdx * (square(cdx) + square(cdy)))
+            + (square(adx) + square(ady)) * (bdx * cdy - cdx * bdy)
+    );
+
+    match det {
+        1 => GeometryPredicateResult::Positive,
+        -1 => GeometryPredicateResult::Negative,
+        0 => GeometryPredicateResult::Zero,
+        _ => unreachable!(),
+    }
+}

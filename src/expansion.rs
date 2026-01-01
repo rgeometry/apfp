@@ -1,6 +1,5 @@
 use std::cmp::Ordering;
 
-#[allow(dead_code)]
 pub(crate) fn fast_two_sum(a: f64, b: f64) -> (f64, f64) {
     debug_assert!(
         a.abs() >= b.abs(),
@@ -50,4 +49,17 @@ fn split(value: f64) -> (f64, f64) {
     let high = c - abig;
     let low = value - high;
     (high, low)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compare_magnitude;
+    use std::cmp::Ordering;
+
+    #[test]
+    fn compare_magnitude_orders_by_abs() {
+        assert_eq!(compare_magnitude(-3.0, 2.0), Ordering::Greater);
+        assert_eq!(compare_magnitude(1.0, -4.0), Ordering::Less);
+        assert_eq!(compare_magnitude(2.0, -2.0), Ordering::Equal);
+    }
 }

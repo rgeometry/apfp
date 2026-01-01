@@ -1,5 +1,7 @@
 use apfp::{Coord, cmp_dist};
 use criterion::{Criterion, criterion_group, criterion_main};
+use num_rational::BigRational;
+use num_traits::Signed;
 use std::cmp::Ordering;
 use std::hint::black_box;
 
@@ -22,6 +24,32 @@ fn cmp_dist_fast(origin: &Coord, p: &Coord, q: &Coord) -> Ordering {
     }
 }
 
+fn cmp_dist_rational(origin: &Coord, p: &Coord, q: &Coord) -> Ordering {
+    let ox = BigRational::from_float(origin.x).expect("inputs must be finite");
+    let oy = BigRational::from_float(origin.y).expect("inputs must be finite");
+    let px = BigRational::from_float(p.x).expect("inputs must be finite");
+    let py = BigRational::from_float(p.y).expect("inputs must be finite");
+    let qx = BigRational::from_float(q.x).expect("inputs must be finite");
+    let qy = BigRational::from_float(q.y).expect("inputs must be finite");
+
+    let pdx = &px - &ox;
+    let pdy = &py - &oy;
+    let qdx = &qx - &ox;
+    let qdy = &qy - &oy;
+
+    let pdist = (&pdx * &pdx) + (&pdy * &pdy);
+    let qdist = (&qdx * &qdx) + (&qdy * &qdy);
+    let diff = pdist - qdist;
+
+    if diff.is_positive() {
+        Ordering::Greater
+    } else if diff.is_negative() {
+        Ordering::Less
+    } else {
+        Ordering::Equal
+    }
+}
+
 fn cmp_dist_apfp_batch(samples: &[(Coord, Coord, Coord)]) {
     for (origin, p, q) in samples {
         black_box(cmp_dist(origin, p, q));
@@ -34,16 +62,26 @@ fn cmp_dist_fast_batch(samples: &[(Coord, Coord, Coord)]) {
     }
 }
 
+fn cmp_dist_rational_batch(samples: &[(Coord, Coord, Coord)]) {
+    for (origin, p, q) in samples {
+        black_box(cmp_dist_rational(origin, p, q));
+    }
+}
+
 fn bench_cmp_dist(c: &mut Criterion) {
     let samples = generate_samples(SAMPLE_COUNT);
     let mut group = c.benchmark_group("cmp_dist_implementations");
+
+    group.bench_function("cmp_dist_fast", |b| {
+        b.iter(|| cmp_dist_fast_batch(black_box(&samples)))
+    });
 
     group.bench_function("cmp_dist_apfp", |b| {
         b.iter(|| cmp_dist_apfp_batch(black_box(&samples)))
     });
 
-    group.bench_function("cmp_dist_fast", |b| {
-        b.iter(|| cmp_dist_fast_batch(black_box(&samples)))
+    group.bench_function("cmp_dist_rational", |b| {
+        b.iter(|| cmp_dist_rational_batch(black_box(&samples)))
     });
 
     group.finish();

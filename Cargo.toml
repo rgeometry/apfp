@@ -14,6 +14,8 @@ ntest = "0.9"
 robust = "1.2.0"
 criterion = "0.7.0"
 geometry-predicates = "0.3"
+num-rational = "0.4"
+num-traits = "0.2"
 
 [[bench]]
 name = "orient2d_bench"

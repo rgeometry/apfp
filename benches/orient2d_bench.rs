@@ -8,6 +8,10 @@ use std::hint::black_box;
 
 /// Number of random test cases to generate for benchmarking
 const SAMPLE_COUNT: usize = 5_000;
+/// Number of stage-specific cases to generate per branch
+const STAGE_SAMPLE_COUNT: usize = 1_000;
+/// Cap attempts while searching for stage-specific samples
+const STAGE_MAX_ATTEMPTS: usize = 2_000_000;
 
 /// Maximum absolute value for coordinate components to avoid overflow
 const MAG_LIMIT: f64 = 1.0e6;
@@ -85,9 +89,9 @@ fn orient2d_rational_batch(samples: &[(Coord, Coord, Coord)]) {
 
 fn bench_orient2d(c: &mut Criterion) {
     let samples = generate_samples(SAMPLE_COUNT);
-    let stage_fast = generate_stage_samples(SAMPLE_COUNT, Stage::Fast);
-    let stage_dd = generate_stage_samples(SAMPLE_COUNT, Stage::Dd);
-    let stage_exact = generate_stage_samples(SAMPLE_COUNT, Stage::Exact);
+    let stage_fast = generate_stage_samples(STAGE_SAMPLE_COUNT, Stage::Fast);
+    let stage_dd = generate_stage_samples(STAGE_SAMPLE_COUNT, Stage::Dd);
+    let stage_exact = generate_stage_samples(STAGE_SAMPLE_COUNT, Stage::Exact);
     let mut group = c.benchmark_group("orient2d_implementations");
 
     group.bench_function("orient2d_fast", |b| {
@@ -145,7 +149,9 @@ fn generate_samples(count: usize) -> Vec<(Coord, Coord, Coord)> {
 fn generate_stage_samples(count: usize, stage: Stage) -> Vec<(Coord, Coord, Coord)> {
     let mut seed = 0x1234_5678_9abc_def0u64 ^ (stage as u64).wrapping_mul(0x9e3779b97f4a7c15);
     let mut samples = Vec::with_capacity(count);
-    while samples.len() < count {
+    let mut attempts = 0usize;
+    while samples.len() < count && attempts < STAGE_MAX_ATTEMPTS {
+        attempts += 1;
         if let Some(sample) = find_orient2d_case(&mut seed, stage) {
             samples.push(sample);
         }

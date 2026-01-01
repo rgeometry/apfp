@@ -1,72 +1,93 @@
-# Adaptive Precision Floating-Point Arithmetic Library
+# apfp - Adaptive Precision Floating-Point
 
-This library offers adaptive-precision floating-point arithmetic routines for applications that demand robustness without sacrificing performance. It builds on the principles popularized by Shewchuk’s floating-point expansions, exposing fast kernels for exact addition, multiplication, scaling, and compression of IEEE double components. The result is a flexible toolkit that makes it practical to lift many algorithms to exact or tightly-bounded arithmetic while reusing standard hardware operations.
+Robust geometric predicates using adaptive precision arithmetic. The library provides exact sign computation for arithmetic expressions, automatically escalating precision only when needed.
 
-## Why Use This Library?
-- **Robust geometric predicates**: Determine the orientation of 2D/3D point sets or test whether a point lies inside a circle or sphere without the usual roundoff pitfalls.
-- **General-purpose arithmetic**: Unlike crates such as `robust`, these kernels are not limited to pre-built geometric predicates; you can assemble arbitrary polynomial expressions, maintain error bounds, or evaluate determinants of your own design.
-- **Adaptive staging**: Each primitive returns both an approximate result and its residual error, so you can escalate precision only when a calculation is inconclusive—ideal for performance-critical code that occasionally encounters degeneracies.
-- **Portable & efficient**: All operations rely on IEEE 754 binary floating-point with exact rounding (round-to-even preferred). No exotic hardware features or extended precision types are required.
+## Features
 
-## Getting Started
-Add the crate to your `Cargo.toml`:
+- **Robust geometric predicates**: `orient2d`, `incircle`, `cmp_dist` that handle near-degenerate cases correctly
+- **General-purpose sign computation**: The `apfp_signum!` macro computes exact signs for arbitrary arithmetic expressions
+- **Adaptive staging**: Fast f64 evaluation with error bounds, falling back to double-double or exact arithmetic only when necessary
+- **Allocation-free**: All operations use fixed stack buffers computed at compile time
+
+## Quick Start
 
 ```toml
 [dependencies]
-apfp = { path = "." }
+apfp = "0.1"
 ```
 
-Then import the modules you need:
+### Using Pre-built Predicates
 
 ```rust
-use apfp::expansion::{two_sum, fast_two_sum};
-use apfp::predicates::{orient2d, incircle};
-```
+use apfp::{orient2d, cmp_dist, incircle, Coord, GeometryPredicateResult};
+use std::cmp::Ordering;
 
-Each primitive returns a small expansion (ordered list of doubles); you can pass these expansions to downstream operations or compress them when you only need a bounded precision result.
+let a = Coord::new(0.0, 0.0);
+let b = Coord::new(1.0, 0.0);
+let c = Coord::new(0.5, 1e-16);
 
-## Example: Orientation Test
+// Orientation test: is c left of, right of, or on line ab?
+match orient2d(&a, &b, &c) {
+    GeometryPredicateResult::Positive => println!("Counter-clockwise"),
+    GeometryPredicateResult::Negative => println!("Clockwise"),
+    GeometryPredicateResult::Zero => println!("Collinear"),
+}
 
-```rust
-use apfp::predicates::orient2d;
-
-let a = (0.0, 0.0);
-let b = (1.0, 0.0);
-let c = (0.9999999999999999, 1e-16);
-
-let orientation = orient2d(a, b, c);
-if orientation.is_positive() {
-    println!("Counter-clockwise");
-} else if orientation.is_negative() {
-    println!("Clockwise");
-} else {
-    println!("Collinear");
+// Distance comparison: is p closer to origin than q?
+let origin = Coord::new(0.0, 0.0);
+let p = Coord::new(1.0, 0.0);
+let q = Coord::new(0.0, 1.0);
+match cmp_dist(&origin, &p, &q) {
+    Ordering::Less => println!("p is closer"),
+    Ordering::Greater => println!("q is closer"),
+    Ordering::Equal => println!("equidistant"),
 }
 ```
 
-`orient2d` escalates from a fast hardware evaluation to exact arithmetic only when the input configuration is near-degenerate, so most calls run at the speed of ordinary double arithmetic.
+### Building Custom Expressions
 
-## Example: Building Your Own Expressions
+Use `apfp_signum!` to compute the exact sign of any arithmetic expression:
 
 ```rust
-use apfp::expansion::{two_sum, scale_expansion, compress};
+use apfp::{apfp_signum, square};
 
-// Compute (x + y) * alpha with explicit control over rounding error.
-let (sum_hi, sum_lo) = two_sum(x, y);
-let expansion = scale_expansion(&[sum_lo, sum_hi], alpha);
-let normalized = compress(&expansion);
+// Compute sign of a determinant
+let a = 1.0_f64;
+let b = 2.0_f64;
+let c = 3.0_f64;
+let d = 4.0_f64;
+let sign = apfp_signum!(a * d - b * c);
+assert_eq!(sign, -1); // 1*4 - 2*3 = -2 < 0
+
+// Use square() for squared terms (more efficient than x * x)
+let x = 3.0_f64;
+let y = 4.0_f64;
+let z = 5.0_f64;
+let sign = apfp_signum!(square(x) + square(y) - square(z));
+assert_eq!(sign, 0); // 9 + 16 - 25 = 0
 ```
 
-Because every step preserves nonoverlapping components, you can safely combine these results into more complex formulas or derive your own adaptive predicates.
+The macro supports `+`, `-`, `*`, and `square()` operations on `f64` values.
 
-## Requirements & Caveats
-- Assumes IEEE 754 binary arithmetic with exact rounding; round-to-even tie-breaking is recommended for the fastest algorithms (alternatives are provided when unavailable).
-- Expansions extend precision but not exponent range; exceptionally large or tiny magnitudes may require splitting numbers first.
-- FFT-style multiplication is not provided; for very high precision workloads you may prefer a traditional big-number library.
+## How It Works
 
-## Learn More
-- The accompanying `SHEWCHUK.md` file summarizes the foundational paper “Adaptive Precision Floating-Point Arithmetic and Fast Robust Geometric Predicates”.
-- API documentation and detailed module guides are available through `cargo doc`.
+The library implements Shewchuk's adaptive precision arithmetic:
+
+1. **Fast path**: Evaluate in f64 and compute an error bound. If the result magnitude exceeds the bound, return immediately.
+2. **Double-double path**: Re-evaluate using double-double arithmetic (~106 bits). Check against tighter bounds.
+3. **Exact path**: Compute the exact result using floating-point expansions.
+
+Most calls complete in the fast path. The adaptive approach provides both correctness and performance.
+
+## Performance
+
+On random inputs, `orient2d` performs within 1.1x of the `geometry-predicates` crate (which uses the same underlying algorithm). The macro-based approach allows the compiler to inline and optimize the entire computation.
+
+## Requirements
+
+- IEEE 754 binary floating-point with round-to-nearest-even
+- Rust 2024 edition
 
 ## License
-This project follows the license stated in `Cargo.toml`. Contributions and issues are welcome. Please include failing examples or benchmarks when reporting numerical robustness questions.
+
+See `Cargo.toml` for license information.

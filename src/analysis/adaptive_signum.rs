@@ -238,29 +238,6 @@ pub fn signum_exact<T: Signum>(expr: T, buffer: &mut [f64]) -> i32 {
     expr.signum(buffer)
 }
 
-#[inline(always)]
-pub fn signum_exact_expr<T: Signum>(expr: T) -> i32 {
-    use alloca::with_alloca;
-    use core::{mem, slice};
-
-    let len = T::STACK_LEN;
-    if len == 0 {
-        let mut empty: [f64; 0] = [];
-        return signum_exact(expr, &mut empty);
-    }
-
-    let align = mem::align_of::<f64>();
-    let bytes = len * mem::size_of::<f64>() + align;
-    with_alloca(bytes, |raw| {
-        let ptr = raw.as_mut_ptr().cast::<u8>();
-        let addr = ptr as usize;
-        let offset = (align - (addr % align)) % align;
-        let aligned = unsafe { ptr.add(offset) };
-        let slice = unsafe { slice::from_raw_parts_mut(aligned as *mut f64, len) };
-        signum_exact(expr, slice)
-    })
-}
-
 impl Eval for Scalar {
     fn eval(&self) -> f64 {
         self.0

@@ -37,6 +37,7 @@ name = "apfp"
 version = "0.1.0"
 dependencies = [
  "alloca",
+ "apfp_signum_macro",
  "criterion",
  "geometry-predicates",
  "ntest",
@@ -46,6 +47,16 @@ dependencies = [
  "num-traits",
  "quickcheck",
  "robust",
+]
+
+[[package]]
+name = "apfp_signum_macro"
+version = "0.1.0"
+dependencies = [
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.106",
 ]
 
 [[package]]

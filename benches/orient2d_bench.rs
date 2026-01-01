@@ -1,5 +1,7 @@
 use apfp::analysis::ast_static::orient2d_exact;
-use apfp::analysis::{orient2d_adaptive, orient2d_direct, orient2d_fast};
+use apfp::analysis::{
+    orient2d_adaptive, orient2d_direct, orient2d_fast, orient2d_macro, orient2d_macro_adaptive,
+};
 use apfp::{Coord, orient2d_rational};
 use criterion::{Criterion, criterion_group, criterion_main};
 use geometry_predicates::orient2d;
@@ -40,6 +42,20 @@ fn orient2d_exact_batch(samples: &[(Coord, Coord, Coord)]) {
 fn orient2d_direct_batch(samples: &[(Coord, Coord, Coord)]) {
     for (a, b, c) in samples {
         black_box(orient2d_direct(*a, *b, *c));
+    }
+}
+
+/// Benchmark the macro-built AST exact orient2d.
+fn orient2d_macro_batch(samples: &[(Coord, Coord, Coord)]) {
+    for (a, b, c) in samples {
+        black_box(orient2d_macro(*a, *b, *c));
+    }
+}
+
+/// Benchmark the macro-built AST with fast-path filtering.
+fn orient2d_macro_adaptive_batch(samples: &[(Coord, Coord, Coord)]) {
+    for (a, b, c) in samples {
+        black_box(orient2d_macro_adaptive(*a, *b, *c));
     }
 }
 
@@ -87,6 +103,14 @@ fn bench_orient2d(c: &mut Criterion) {
         b.iter(|| orient2d_direct_batch(black_box(&samples)))
     });
 
+    group.bench_function("orient2d_macro_adaptive", |b| {
+        b.iter(|| orient2d_macro_adaptive_batch(black_box(&samples)))
+    });
+
+    group.bench_function("orient2d_macro", |b| {
+        b.iter(|| orient2d_macro_batch(black_box(&samples)))
+    });
+
     group.bench_function("orient2d_rational", |b| {
         b.iter(|| orient2d_rational_batch(black_box(&samples)))
     });
@@ -119,6 +143,14 @@ fn bench_orient2d_collinear(c: &mut Criterion) {
 
     group.bench_function("orient2d_direct", |b| {
         b.iter(|| orient2d_direct_batch(black_box(&samples)))
+    });
+
+    group.bench_function("orient2d_macro_adaptive", |b| {
+        b.iter(|| orient2d_macro_adaptive_batch(black_box(&samples)))
+    });
+
+    group.bench_function("orient2d_macro", |b| {
+        b.iter(|| orient2d_macro_batch(black_box(&samples)))
     });
 
     group.bench_function("orient2d_rational", |b| {

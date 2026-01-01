@@ -1,4 +1,4 @@
-use crate::{apfp_signum, Coord};
+use crate::{Coord, apfp_signum};
 use std::cmp::Ordering;
 
 /// Result of a geometric predicate

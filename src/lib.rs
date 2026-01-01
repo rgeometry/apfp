@@ -5,4 +5,4 @@ pub mod expansion;
 pub mod geometry;
 
 pub use analysis::adaptive_signum::square;
-pub use geometry::{cmp_dist, incircle, Coord, GeometryPredicateResult, orient2d};
+pub use geometry::{Coord, GeometryPredicateResult, cmp_dist, incircle, orient2d};

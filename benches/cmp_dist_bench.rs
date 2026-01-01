@@ -1,16 +1,17 @@
 use apfp::analysis::adaptive_signum::{
     Dd, dd_add, dd_from, dd_signum, dd_square, dd_sub, gamma_from_ops,
 };
-use apfp::{Coord, apfp_signum, cmp_dist, square};
+use apfp::{Coord, apfp_signum, cmp_dist};
 use criterion::{Criterion, criterion_group, criterion_main};
 use num_rational::BigRational;
 use num_traits::Signed;
 use std::cmp::Ordering;
 use std::hint::black_box;
+use std::time::Duration;
 
 const SAMPLE_COUNT: usize = 5_000;
-const STAGE_SAMPLE_COUNT: usize = 1_000;
-const STAGE_MAX_ATTEMPTS: usize = 2_000_000;
+const STAGE_SAMPLE_COUNT: usize = 50;
+const STAGE_MAX_ATTEMPTS: usize = 200_000;
 const MAG_LIMIT: f64 = 1.0e6;
 
 const EPS_LIST: [f64; 12] = [
@@ -104,6 +105,10 @@ fn bench_cmp_dist(c: &mut Criterion) {
     let stage_dd = generate_stage_samples(STAGE_SAMPLE_COUNT, Stage::Dd);
     let stage_exact = generate_stage_samples(STAGE_SAMPLE_COUNT, Stage::Exact);
     let mut group = c.benchmark_group("cmp_dist_implementations");
+    group
+        .sample_size(10)
+        .warm_up_time(Duration::from_millis(500))
+        .measurement_time(Duration::from_secs(1));
 
     group.bench_function("cmp_dist_fast", |b| {
         b.iter(|| cmp_dist_fast_batch(black_box(&samples)))
@@ -155,15 +160,19 @@ fn generate_samples(count: usize) -> Vec<(Coord, Coord, Coord)> {
 
 fn generate_stage_samples(count: usize, stage: Stage) -> Vec<(Coord, Coord, Coord)> {
     let mut seed = 0x1234_5678_9abc_def0u64 ^ (stage as u64).wrapping_mul(0x9e3779b97f4a7c15);
-    let mut samples = Vec::with_capacity(count);
     let mut attempts = 0usize;
-    while samples.len() < count && attempts < STAGE_MAX_ATTEMPTS {
+    let mut sample = None;
+    while sample.is_none() && attempts < STAGE_MAX_ATTEMPTS {
         attempts += 1;
-        if let Some(sample) = find_cmp_dist_case(&mut seed, stage) {
-            samples.push(sample);
-        }
+        sample = find_cmp_dist_case(&mut seed, stage);
     }
-    samples
+    if sample.is_none() {
+        sample = find_cmp_dist_case_deterministic(stage);
+    }
+    let Some(sample) = sample else {
+        return Vec::new();
+    };
+    vec![sample; count]
 }
 
 fn find_cmp_dist_case(seed: &mut u64, stage: Stage) -> Option<(Coord, Coord, Coord)> {
@@ -183,6 +192,21 @@ fn find_cmp_dist_case(seed: &mut u64, stage: Stage) -> Option<(Coord, Coord, Coo
         }
 
         let r = lcg_range(seed, 1.0e3, 1.0e6);
+        for &eps in &EPS_LIST {
+            let p = Coord::new(r, 0.0);
+            let q = Coord::new(r + eps, 0.0);
+            if classify_cmp_dist(&origin, &p, &q) == Some(stage) {
+                return Some((origin, p, q));
+            }
+        }
+    }
+    None
+}
+
+fn find_cmp_dist_case_deterministic(stage: Stage) -> Option<(Coord, Coord, Coord)> {
+    let origin = Coord::new(0.0, 0.0);
+    let radii = [1.0e3, 1.0e6, 1.0e9, 1.0e12];
+    for &r in &radii {
         for &eps in &EPS_LIST {
             let p = Coord::new(r, 0.0);
             let q = Coord::new(r + eps, 0.0);

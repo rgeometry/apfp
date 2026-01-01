@@ -5,13 +5,14 @@ use geometry_predicates::orient2d as gp_orient2d;
 use num_rational::BigRational;
 use num_traits::Zero;
 use std::hint::black_box;
+use std::time::Duration;
 
 /// Number of random test cases to generate for benchmarking
 const SAMPLE_COUNT: usize = 5_000;
 /// Number of stage-specific cases to generate per branch
-const STAGE_SAMPLE_COUNT: usize = 1_000;
+const STAGE_SAMPLE_COUNT: usize = 50;
 /// Cap attempts while searching for stage-specific samples
-const STAGE_MAX_ATTEMPTS: usize = 2_000_000;
+const STAGE_MAX_ATTEMPTS: usize = 200_000;
 
 /// Maximum absolute value for coordinate components to avoid overflow
 const MAG_LIMIT: f64 = 1.0e6;
@@ -93,6 +94,10 @@ fn bench_orient2d(c: &mut Criterion) {
     let stage_dd = generate_stage_samples(STAGE_SAMPLE_COUNT, Stage::Dd);
     let stage_exact = generate_stage_samples(STAGE_SAMPLE_COUNT, Stage::Exact);
     let mut group = c.benchmark_group("orient2d_implementations");
+    group
+        .sample_size(10)
+        .warm_up_time(Duration::from_millis(500))
+        .measurement_time(Duration::from_secs(1));
 
     group.bench_function("orient2d_fast", |b| {
         b.iter(|| orient2d_fast_batch(black_box(&samples)))
@@ -148,15 +153,19 @@ fn generate_samples(count: usize) -> Vec<(Coord, Coord, Coord)> {
 
 fn generate_stage_samples(count: usize, stage: Stage) -> Vec<(Coord, Coord, Coord)> {
     let mut seed = 0x1234_5678_9abc_def0u64 ^ (stage as u64).wrapping_mul(0x9e3779b97f4a7c15);
-    let mut samples = Vec::with_capacity(count);
     let mut attempts = 0usize;
-    while samples.len() < count && attempts < STAGE_MAX_ATTEMPTS {
+    let mut sample = None;
+    while sample.is_none() && attempts < STAGE_MAX_ATTEMPTS {
         attempts += 1;
-        if let Some(sample) = find_orient2d_case(&mut seed, stage) {
-            samples.push(sample);
-        }
+        sample = find_orient2d_case(&mut seed, stage);
     }
-    samples
+    if sample.is_none() {
+        sample = find_orient2d_case_deterministic(stage);
+    }
+    let Some(sample) = sample else {
+        return Vec::new();
+    };
+    vec![sample; count]
 }
 
 fn find_orient2d_case(seed: &mut u64, stage: Stage) -> Option<(Coord, Coord, Coord)> {
@@ -190,6 +199,30 @@ fn find_orient2d_case(seed: &mut u64, stage: Stage) -> Option<(Coord, Coord, Coo
             let c = Coord::new(0.0, 0.0);
             if classify_orient2d(&a, &b, &c) == Some(stage) {
                 return Some((a, b, c));
+            }
+        }
+    }
+    None
+}
+
+fn find_orient2d_case_deterministic(stage: Stage) -> Option<(Coord, Coord, Coord)> {
+    let directions = [(1.0, 0.0), (0.0, 1.0), (1.0, 1.0), (1.0, -1.0)];
+    let scales = [1.0, 1.0e3, 1.0e6, 1.0e9];
+    for &(dx, dy) in &directions {
+        for &scale in &scales {
+            let dx = dx * scale;
+            let dy = dy * scale;
+            for &t1 in &scales {
+                for &t2 in &scales {
+                    for &eps in &EPS_LIST {
+                        let a = Coord::new(t1 * dx, t1 * dy);
+                        let b = Coord::new(t2 * dx - eps * dy, t2 * dy + eps * dx);
+                        let c = Coord::new(0.0, 0.0);
+                        if classify_orient2d(&a, &b, &c) == Some(stage) {
+                            return Some((a, b, c));
+                        }
+                    }
+                }
             }
         }
     }

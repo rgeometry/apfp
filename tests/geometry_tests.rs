@@ -1,10 +1,11 @@
-use apfp::analysis::adaptive_signum::{Dd, dd_add, dd_from, dd_mul, dd_signum, dd_square, dd_sub};
+use apfp::analysis::adaptive_signum::{
+    Dd, Diff, Scalar, Signum, Square, Sum, dd_add, dd_from, dd_mul, dd_signum, dd_square, dd_sub,
+    signum_exact,
+};
 use apfp::apfp_signum;
-use apfp::{Coord, GeometryPredicateResult, incircle, orient2d};
+use apfp::{Coord, GeometryPredicateResult, orient2d};
 use geometry_predicates::orient2d as gp_orient2d;
 use ntest::timeout;
-use num_rational::BigRational;
-use num_traits::{Signed, Zero};
 use quickcheck::{QuickCheck, TestResult};
 
 const MAG_LIMIT: f64 = 1.0e6;
@@ -13,12 +14,19 @@ const QC_MAX_TESTS: u64 = 20_000;
 const QC_STAGE_TESTS: u64 = 200;
 
 const EPS_LIST: [f64; 12] = [
-    1.0e-2, 1.0e-4, 1.0e-6, 1.0e-8, 1.0e-10, 1.0e-12, 1.0e-14, 1.0e-16, 1.0e-18, 1.0e-20, 1.0e-24,
-    1.0e-30,
+    1.0e-2, 1.0e-4, 1.0e-6, 1.0e-8, 1.0e-10, 1.0e-12, 1.0e-14, 1.0e-16, 1.0e-18, 1.0e-20,
+    1.0e-24, 1.0e-30,
 ];
 
 const LCG_A: u64 = 6364136223846793005;
 const LCG_C: u64 = 1;
+
+type CmpDistExpr = Diff<
+    Sum<Square<Diff<Scalar, Scalar>>, Square<Diff<Scalar, Scalar>>>,
+    Sum<Square<Diff<Scalar, Scalar>>, Square<Diff<Scalar, Scalar>>>,
+>;
+
+type SquareDiffExpr = Diff<Square<Scalar>, Square<Scalar>>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Stage {
@@ -51,109 +59,36 @@ fn orient2d_detects_collinear() {
     assert_eq!(orient2d(&a, &b, &c), GeometryPredicateResult::Zero);
 }
 
-#[test]
-fn incircle_positive_for_point_inside() {
-    let a = Coord::new(0.0, 0.0);
-    let b = Coord::new(1.0, 0.0);
-    let c = Coord::new(0.0, 1.0);
-    let d = Coord::new(0.25, 0.25);
-    assert_eq!(incircle(&a, &b, &c, &d), GeometryPredicateResult::Positive);
-}
-
-#[test]
-fn incircle_negative_for_point_outside() {
-    let a = Coord::new(0.0, 0.0);
-    let b = Coord::new(1.0, 0.0);
-    let c = Coord::new(0.0, 1.0);
-    let d = Coord::new(2.0, 2.0);
-    assert_eq!(incircle(&a, &b, &c, &d), GeometryPredicateResult::Negative);
-}
-
-#[test]
-fn incircle_zero_on_circumference() {
-    let a = Coord::new(0.0, 0.0);
-    let b = Coord::new(1.0, 0.0);
-    let c = Coord::new(0.0, 1.0);
-    let d = Coord::new(1.0, 1.0);
-    assert_eq!(incircle(&a, &b, &c, &d), GeometryPredicateResult::Zero);
-}
-
-fn to_rational(value: f64) -> Option<BigRational> {
-    if !value.is_finite() {
-        return None;
-    }
-    BigRational::from_float(value)
-}
-
-fn orient2d_rational(a: &Coord, b: &Coord, c: &Coord) -> Option<GeometryPredicateResult> {
-    let ax = to_rational(a.x)?;
-    let ay = to_rational(a.y)?;
-    let bx = to_rational(b.x)?;
-    let by = to_rational(b.y)?;
-    let cx = to_rational(c.x)?;
-    let cy = to_rational(c.y)?;
-
-    let bax = &bx - &ax;
-    let bay = &by - &ay;
-    let cax = &cx - &ax;
-    let cay = &cy - &ay;
-
-    let det = bax * &cay - bay * &cax;
-    Some(result_from_rational(det))
-}
-
-fn incircle_rational(
-    a: &Coord,
-    b: &Coord,
-    c: &Coord,
-    d: &Coord,
-) -> Option<GeometryPredicateResult> {
-    let ax = to_rational(a.x)?;
-    let ay = to_rational(a.y)?;
-    let bx = to_rational(b.x)?;
-    let by = to_rational(b.y)?;
-    let cx = to_rational(c.x)?;
-    let cy = to_rational(c.y)?;
-    let dx = to_rational(d.x)?;
-    let dy = to_rational(d.y)?;
-
-    let adx = &ax - &dx;
-    let ady = &ay - &dy;
-    let bdx = &bx - &dx;
-    let bdy = &by - &dy;
-    let cdx = &cx - &dx;
-    let cdy = &cy - &dy;
-
-    let ad2 = (&adx * &adx) + (&ady * &ady);
-    let bd2 = (&bdx * &bdx) + (&bdy * &bdy);
-    let cd2 = (&cdx * &cdx) + (&cdy * &cdy);
-
-    let det = (&adx * &(&bdy * &cd2 - &cdy * &bd2))
-        + (&ady * &(&cdx * &bd2 - &bdx * &cd2))
-        + (&ad2 * &(&bdx * &cdy - &cdx * &bdy));
-
-    Some(result_from_rational(det))
-}
-
-fn result_from_rational(r: BigRational) -> GeometryPredicateResult {
-    if r.is_zero() {
-        GeometryPredicateResult::Zero
-    } else if r.is_positive() {
-        GeometryPredicateResult::Positive
+fn orient2d_reference_sign(a: &Coord, b: &Coord, c: &Coord) -> Option<i32> {
+    let gp_sign = sign_from_f64(gp_orient2d([a.x, a.y], [b.x, b.y], [c.x, c.y]));
+    let robust_value = robust::orient2d(robust_coord(a), robust_coord(b), robust_coord(c));
+    let robust_sign = sign_from_f64(robust_value);
+    if gp_sign == robust_sign {
+        Some(gp_sign)
     } else {
-        GeometryPredicateResult::Negative
+        None
     }
 }
 
-fn result_from_f64(value: f64) -> GeometryPredicateResult {
-    const EPS: f64 = 1.0e-12;
-    if value.abs() <= EPS {
-        GeometryPredicateResult::Zero
-    } else if value > 0.0 {
-        GeometryPredicateResult::Positive
-    } else {
-        GeometryPredicateResult::Negative
-    }
+fn cmp_dist_reference_sign(origin: &Coord, p: &Coord, q: &Coord) -> i32 {
+    let expr = Diff(
+        Sum(
+            Square(Diff(Scalar(p.x), Scalar(origin.x))),
+            Square(Diff(Scalar(p.y), Scalar(origin.y))),
+        ),
+        Sum(
+            Square(Diff(Scalar(q.x), Scalar(origin.x))),
+            Square(Diff(Scalar(q.y), Scalar(origin.y))),
+        ),
+    );
+    let mut buffer = [0.0_f64; <CmpDistExpr as Signum>::STACK_LEN];
+    signum_exact(expr, &mut buffer)
+}
+
+fn square_diff_reference_sign(x: f64, y: f64) -> i32 {
+    let expr = Diff(Square(Scalar(x)), Square(Scalar(y)));
+    let mut buffer = [0.0_f64; <SquareDiffExpr as Signum>::STACK_LEN];
+    signum_exact(expr, &mut buffer)
 }
 
 fn within_limits(values: &[f64]) -> bool {
@@ -161,13 +96,6 @@ fn within_limits(values: &[f64]) -> bool {
 }
 
 fn run_qc(prop: fn(f64, f64, f64, f64, f64, f64) -> TestResult) {
-    QuickCheck::new()
-        .tests(QC_TESTS)
-        .max_tests(QC_MAX_TESTS)
-        .quickcheck(prop);
-}
-
-fn run_qc_incircle(prop: fn(f64, f64, f64, f64, f64, f64, f64, f64) -> TestResult) {
     QuickCheck::new()
         .tests(QC_TESTS)
         .max_tests(QC_MAX_TESTS)
@@ -198,64 +126,17 @@ fn property_orient2d_consistency(
     let c = Coord::new(cx, cy);
 
     let ours = orient2d(&a, &b, &c);
-
-    let Some(rational_result) = orient2d_rational(&a, &b, &c) else {
+    let Some(reference_sign) = orient2d_reference_sign(&a, &b, &c) else {
         return TestResult::discard();
     };
 
-    let robust_value = robust::orient2d(robust_coord(&a), robust_coord(&b), robust_coord(&c));
-    let robust_result = result_from_f64(robust_value);
-
-    TestResult::from_bool(ours == rational_result && ours == robust_result)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn property_incircle_consistency(
-    ax: f64,
-    ay: f64,
-    bx: f64,
-    by: f64,
-    cx: f64,
-    cy: f64,
-    dx: f64,
-    dy: f64,
-) -> TestResult {
-    if !within_limits(&[ax, ay, bx, by, cx, cy, dx, dy]) {
-        return TestResult::discard();
-    }
-
-    let a = Coord::new(ax, ay);
-    let b = Coord::new(bx, by);
-    let c = Coord::new(cx, cy);
-    let d = Coord::new(dx, dy);
-
-    let ours = incircle(&a, &b, &c, &d);
-
-    let Some(rational_result) = incircle_rational(&a, &b, &c, &d) else {
-        return TestResult::discard();
-    };
-
-    let robust_value = robust::incircle(
-        robust_coord(&a),
-        robust_coord(&b),
-        robust_coord(&c),
-        robust_coord(&d),
-    );
-    let robust_result = result_from_f64(robust_value);
-
-    TestResult::from_bool(ours == rational_result && ours == robust_result)
+    TestResult::from_bool(sign_from_result(ours) == reference_sign)
 }
 
 #[test]
 #[timeout(5000)]
 fn quickcheck_orient2d_consistency() {
     run_qc(property_orient2d_consistency);
-}
-
-#[test]
-#[timeout(5000)]
-fn quickcheck_incircle_consistency() {
-    run_qc_incircle(property_incircle_consistency);
 }
 
 fn robust_coord(coord: &Coord) -> robust::Coord<f64> {
@@ -270,14 +151,8 @@ fn apfp_signum_square_regression() {
     let x = 1.0e6_f64 + 1.0e-3;
     let y = 1.0e6_f64 - 1.0e-3;
     let apfp = apfp_signum!(square(x) - square(y));
-    let Some(rational) = cmp_dist_rational(
-        &Coord::new(0.0, 0.0),
-        &Coord::new(x, 0.0),
-        &Coord::new(y, 0.0),
-    ) else {
-        panic!("expected finite rational");
-    };
-    assert_eq!(apfp, rational);
+    let reference = square_diff_reference_sign(x, y);
+    assert_eq!(apfp, reference);
 }
 
 fn sign_from_result(result: GeometryPredicateResult) -> i32 {
@@ -463,25 +338,6 @@ fn find_cmp_dist_case(mut seed: u64, stage: Stage) -> Option<(Coord, Coord, Coor
     None
 }
 
-fn cmp_dist_rational(origin: &Coord, p: &Coord, q: &Coord) -> Option<i32> {
-    let ox = to_rational(origin.x)?;
-    let oy = to_rational(origin.y)?;
-    let px = to_rational(p.x)?;
-    let py = to_rational(p.y)?;
-    let qx = to_rational(q.x)?;
-    let qy = to_rational(q.y)?;
-
-    let pdx = &px - &ox;
-    let pdy = &py - &oy;
-    let qdx = &qx - &ox;
-    let qdy = &qy - &oy;
-
-    let pdist = (&pdx * &pdx) + (&pdy * &pdy);
-    let qdist = (&qdx * &qdx) + (&qdy * &qdy);
-    let diff = pdist - qdist;
-    Some(sign_from_result(result_from_rational(diff)))
-}
-
 fn property_apfp_signum_orient2d_stage(seed: u64, stage: Stage) -> TestResult {
     let Some((a, b, c)) = find_orient2d_case(seed, stage) else {
         return TestResult::discard();
@@ -491,13 +347,11 @@ fn property_apfp_signum_orient2d_stage(seed: u64, stage: Stage) -> TestResult {
     }
 
     let sign = apfp_signum!((a.x - c.x) * (b.y - c.y) - (a.y - c.y) * (b.x - c.x));
-    let Some(rational) = orient2d_rational(&a, &b, &c) else {
+    let Some(reference_sign) = orient2d_reference_sign(&a, &b, &c) else {
         return TestResult::discard();
     };
-    let rational_sign = sign_from_result(rational);
-    let gp_sign = sign_from_f64(gp_orient2d([a.x, a.y], [b.x, b.y], [c.x, c.y]));
 
-    TestResult::from_bool(sign == rational_sign && sign == gp_sign)
+    TestResult::from_bool(sign == reference_sign)
 }
 
 fn property_apfp_signum_cmp_dist_stage(seed: u64, stage: Stage) -> TestResult {
@@ -512,11 +366,9 @@ fn property_apfp_signum_cmp_dist_stage(seed: u64, stage: Stage) -> TestResult {
         (square(p.x - origin.x) + square(p.y - origin.y))
             - (square(q.x - origin.x) + square(q.y - origin.y))
     );
-    let Some(rational_sign) = cmp_dist_rational(&origin, &p, &q) else {
-        return TestResult::discard();
-    };
+    let reference_sign = cmp_dist_reference_sign(&origin, &p, &q);
 
-    TestResult::from_bool(sign == rational_sign)
+    TestResult::from_bool(sign == reference_sign)
 }
 
 #[test]

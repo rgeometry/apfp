@@ -12,6 +12,7 @@ pub enum GeometryPredicateResult {
 /// Compute orientation of point c relative to line ab.
 /// Returns Positive if c is to the left of ab (counter-clockwise),
 /// Negative if to the right (clockwise), Zero if collinear.
+#[inline]
 pub fn orient2d(a: &Coord, b: &Coord, c: &Coord) -> GeometryPredicateResult {
     let sign = apfp_signum!((a.x - c.x) * (b.y - c.y) - (a.y - c.y) * (b.x - c.x));
     match sign {
@@ -24,6 +25,7 @@ pub fn orient2d(a: &Coord, b: &Coord, c: &Coord) -> GeometryPredicateResult {
 
 /// Compare squared distances from origin to p and q.
 /// Returns Greater if dist(origin,p) > dist(origin,q), etc.
+#[inline]
 pub fn cmp_dist(origin: &Coord, p: &Coord, q: &Coord) -> Ordering {
     let sign = apfp_signum!(
         (square(p.x - origin.x) + square(p.y - origin.y))
@@ -39,6 +41,7 @@ pub fn cmp_dist(origin: &Coord, p: &Coord, q: &Coord) -> Ordering {
 
 /// Compute whether point d lies inside the circumcircle of triangle abc.
 /// Returns Positive if inside, Negative if outside, Zero if on the circle.
+#[inline]
 pub fn incircle(a: &Coord, b: &Coord, c: &Coord, d: &Coord) -> GeometryPredicateResult {
     let adx = a.x - d.x;
     let ady = a.y - d.y;

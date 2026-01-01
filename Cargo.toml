@@ -13,7 +13,6 @@ num = { version = "0.4", features = [] }
 num-bigint = "0.4"
 num-rational = "0.4"
 geometry-predicates = "0.3"
-apfp_signum_macro = { path = "apfp_signum_macro" }
 
 [dev-dependencies]
 quickcheck = "1"

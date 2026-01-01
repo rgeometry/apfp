@@ -8,7 +8,7 @@
 //! 3) Otherwise, fall back to exact expansion arithmetic using fixed stack
 //!    buffers computed from the expression type.
 //!
-//! A proc macro (`apfp_signum!`) expands an input expression into a static AST
+//! A declarative macro (`apfp_signum!`) expands an input expression into a static AST
 //! of expression types defined here and calls `signum_adaptive`, which handles
 //! both the fast filter and the exact fallback.
 //!
@@ -40,6 +40,16 @@ pub struct Scalar(pub f64);
 pub struct Dd {
     pub hi: f64,
     pub lo: f64,
+}
+
+#[inline(always)]
+pub const fn gamma_from_ops(op_count: usize) -> f64 {
+    if op_count == 0 {
+        return 0.0;
+    }
+    let u = 0.5 * f64::EPSILON;
+    let n = op_count as f64;
+    (n * u) / (1.0 - n * u)
 }
 
 #[inline(always)]
@@ -96,6 +106,7 @@ pub fn dd_signum(value: Dd) -> Option<i32> {
         None
     }
 }
+
 pub struct Negate<T>(pub T);
 pub struct Square<T>(pub T);
 pub struct Sum<A, B>(pub A, pub B);
@@ -562,6 +573,782 @@ fn expansion_sum_stack(lhs: &[f64], rhs: &[f64], output: &mut [f64]) -> usize {
     }
 
     hindex
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_type_finish {
+    ($ty:ty,) => {
+        $ty
+    };
+    ($ty:ty, $($rest:tt)+) => {
+        compile_error!(
+            "unsupported expression; use literals, identifiers, field access, +, -, *, unary -, or square(x)"
+        )
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_type_call {
+    (($callback:ident), $ty:ty, $($rest:tt)*) => {
+        $callback!($ty, $($rest)*)
+    };
+    (($callback:ident, $($args:tt)+), $ty:ty, $($rest:tt)*) => {
+        $callback!($($args)+, $ty, $($rest)*)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_type_expr {
+    ($($tokens:tt)+) => {
+        $crate::_apfp_type_add!((_apfp_type_finish); $($tokens)+)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_type_add {
+    ($cb:tt; $($tokens:tt)+) => {
+        $crate::_apfp_type_mul!((_apfp_type_add_tail, $cb); $($tokens)+)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_type_add_tail {
+    ($cb:tt, $left:ty, + $($rest:tt)+) => {
+        $crate::_apfp_type_mul!((_apfp_type_add_fold, $cb, $left, +); $($rest)+)
+    };
+    ($cb:tt, $left:ty, - $($rest:tt)+) => {
+        $crate::_apfp_type_mul!((_apfp_type_add_fold, $cb, $left, -); $($rest)+)
+    };
+    ($cb:tt, $left:ty, $($rest:tt)*) => {
+        $crate::_apfp_type_call!($cb, $left, $($rest)*)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_type_add_fold {
+    ($cb:tt, $left:ty, +, $right:ty, $($rest:tt)*) => {
+        $crate::_apfp_type_add_tail!(
+            $cb,
+            $crate::analysis::adaptive_signum::Sum<$left, $right>,
+            $($rest)*
+        )
+    };
+    ($cb:tt, $left:ty, -, $right:ty, $($rest:tt)*) => {
+        $crate::_apfp_type_add_tail!(
+            $cb,
+            $crate::analysis::adaptive_signum::Diff<$left, $right>,
+            $($rest)*
+        )
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_type_mul {
+    ($cb:tt; $($tokens:tt)+) => {
+        $crate::_apfp_type_unary!((_apfp_type_mul_tail, $cb); $($tokens)+)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_type_mul_tail {
+    ($cb:tt, $left:ty, * $($rest:tt)+) => {
+        $crate::_apfp_type_unary!((_apfp_type_mul_fold, $cb, $left); $($rest)+)
+    };
+    ($cb:tt, $left:ty, $($rest:tt)*) => {
+        $crate::_apfp_type_call!($cb, $left, $($rest)*)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_type_mul_fold {
+    ($cb:tt, $left:ty, $right:ty, $($rest:tt)*) => {
+        $crate::_apfp_type_mul_tail!(
+            $cb,
+            $crate::analysis::adaptive_signum::Product<$left, $right>,
+            $($rest)*
+        )
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_type_unary {
+    ($cb:tt; - $($rest:tt)+) => {
+        $crate::_apfp_type_unary!((_apfp_type_unary_neg, $cb); $($rest)+)
+    };
+    ($cb:tt; $($tokens:tt)+) => {
+        $crate::_apfp_type_atom!($cb; $($tokens)+)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_type_unary_neg {
+    ($cb:tt, $ty:ty, $($rest:tt)*) => {
+        $crate::_apfp_type_call!(
+            $cb,
+            $crate::analysis::adaptive_signum::Negate<$ty>,
+            $($rest)*
+        )
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_type_atom {
+    ($cb:tt; square ( $($inner:tt)+ ) $($rest:tt)*) => {
+        $crate::_apfp_type_call!(
+            $cb,
+            $crate::analysis::adaptive_signum::Square<
+                $crate::_apfp_type_expr!($($inner)+)
+            >,
+            $($rest)*
+        )
+    };
+    ($cb:tt; ( $($inner:tt)+ ) $($rest:tt)*) => {
+        $crate::_apfp_type_call!(
+            $cb,
+            $crate::_apfp_type_expr!($($inner)+),
+            $($rest)*
+        )
+    };
+    ($cb:tt; $base:ident . $field:ident $( . $tail:ident )* $($rest:tt)*) => {
+        $crate::_apfp_type_call!(
+            $cb,
+            $crate::analysis::adaptive_signum::Scalar,
+            $($rest)*
+        )
+    };
+    ($cb:tt; $lit:literal $($rest:tt)*) => {
+        $crate::_apfp_type_call!(
+            $cb,
+            $crate::analysis::adaptive_signum::Scalar,
+            $($rest)*
+        )
+    };
+    ($cb:tt; $ident:ident ( $($inner:tt)* ) $($rest:tt)*) => {
+        compile_error!("unsupported function call; only square(x) is supported")
+    };
+    ($cb:tt; $ident:ident $($rest:tt)*) => {
+        $crate::_apfp_type_call!(
+            $cb,
+            $crate::analysis::adaptive_signum::Scalar,
+            $($rest)*
+        )
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_fast_finish {
+    ($expr:expr,) => {
+        $expr
+    };
+    ($expr:expr, $($rest:tt)+) => {
+        compile_error!(
+            "unsupported expression; use literals, identifiers, field access, +, -, *, unary -, or square(x)"
+        )
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_fast_call {
+    (($callback:ident), $expr:expr, $($rest:tt)*) => {
+        $callback!($expr, $($rest)*)
+    };
+    (($callback:ident, $($args:tt)+), $expr:expr, $($rest:tt)*) => {
+        $callback!($($args)+, $expr, $($rest)*)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_fast_expr {
+    ($($tokens:tt)+) => {
+        $crate::_apfp_fast_add!((_apfp_fast_finish); $($tokens)+)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_fast_add {
+    ($cb:tt; $($tokens:tt)+) => {
+        $crate::_apfp_fast_mul!((_apfp_fast_add_tail, $cb); $($tokens)+)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_fast_add_tail {
+    ($cb:tt, $left:expr, + $($rest:tt)+) => {
+        $crate::_apfp_fast_mul!((_apfp_fast_add_fold, $cb, $left, +); $($rest)+)
+    };
+    ($cb:tt, $left:expr, - $($rest:tt)+) => {
+        $crate::_apfp_fast_mul!((_apfp_fast_add_fold, $cb, $left, -); $($rest)+)
+    };
+    ($cb:tt, $left:expr, $($rest:tt)*) => {
+        $crate::_apfp_fast_call!($cb, $left, $($rest)*)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_fast_add_fold {
+    ($cb:tt, $left:expr, +, $right:expr, $($rest:tt)*) => {
+        $crate::_apfp_fast_add_tail!(
+            $cb,
+            {
+                let (left_value, left_abs) = $left;
+                let (right_value, right_abs) = $right;
+                let value = left_value + right_value;
+                let abs = left_abs + right_abs;
+                (value, abs)
+            },
+            $($rest)*
+        )
+    };
+    ($cb:tt, $left:expr, -, $right:expr, $($rest:tt)*) => {
+        $crate::_apfp_fast_add_tail!(
+            $cb,
+            {
+                let (left_value, left_abs) = $left;
+                let (right_value, right_abs) = $right;
+                let value = left_value - right_value;
+                let abs = left_abs + right_abs;
+                (value, abs)
+            },
+            $($rest)*
+        )
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_fast_mul {
+    ($cb:tt; $($tokens:tt)+) => {
+        $crate::_apfp_fast_unary!((_apfp_fast_mul_tail, $cb); $($tokens)+)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_fast_mul_tail {
+    ($cb:tt, $left:expr, * $($rest:tt)+) => {
+        $crate::_apfp_fast_unary!((_apfp_fast_mul_fold, $cb, $left); $($rest)+)
+    };
+    ($cb:tt, $left:expr, $($rest:tt)*) => {
+        $crate::_apfp_fast_call!($cb, $left, $($rest)*)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_fast_mul_fold {
+    ($cb:tt, $left:expr, $right:expr, $($rest:tt)*) => {
+        $crate::_apfp_fast_mul_tail!(
+            $cb,
+            {
+                let (left_value, _) = $left;
+                let (right_value, _) = $right;
+                let value = left_value * right_value;
+                let abs = value.abs();
+                (value, abs)
+            },
+            $($rest)*
+        )
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_fast_unary {
+    ($cb:tt; - $($rest:tt)+) => {
+        $crate::_apfp_fast_unary!((_apfp_fast_unary_neg, $cb); $($rest)+)
+    };
+    ($cb:tt; $($tokens:tt)+) => {
+        $crate::_apfp_fast_atom!($cb; $($tokens)+)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_fast_unary_neg {
+    ($cb:tt, $expr:expr, $($rest:tt)*) => {
+        $crate::_apfp_fast_call!(
+            $cb,
+            {
+                let (value, abs) = $expr;
+                (-value, abs)
+            },
+            $($rest)*
+        )
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_fast_atom {
+    ($cb:tt; square ( $($inner:tt)+ ) $($rest:tt)*) => {
+        $crate::_apfp_fast_call!(
+            $cb,
+            {
+                let (value, _) = $crate::_apfp_fast_expr!($($inner)+);
+                let value = value * value;
+                let abs = value.abs();
+                (value, abs)
+            },
+            $($rest)*
+        )
+    };
+    ($cb:tt; ( $($inner:tt)+ ) $($rest:tt)*) => {
+        $crate::_apfp_fast_call!(
+            $cb,
+            $crate::_apfp_fast_expr!($($inner)+),
+            $($rest)*
+        )
+    };
+    ($cb:tt; $base:ident . $field:ident $( . $tail:ident )* $($rest:tt)*) => {
+        $crate::_apfp_fast_call!(
+            $cb,
+            {
+                let value = ($base.$field $(.$tail)*) as f64;
+                let abs = value.abs();
+                (value, abs)
+            },
+            $($rest)*
+        )
+    };
+    ($cb:tt; $lit:literal $($rest:tt)*) => {
+        $crate::_apfp_fast_call!(
+            $cb,
+            {
+                let value = ($lit) as f64;
+                let abs = value.abs();
+                (value, abs)
+            },
+            $($rest)*
+        )
+    };
+    ($cb:tt; $ident:ident ( $($inner:tt)* ) $($rest:tt)*) => {
+        compile_error!("unsupported function call; only square(x) is supported")
+    };
+    ($cb:tt; $ident:ident $($rest:tt)*) => {
+        $crate::_apfp_fast_call!(
+            $cb,
+            {
+                let value = ($ident) as f64;
+                let abs = value.abs();
+                (value, abs)
+            },
+            $($rest)*
+        )
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_dd_finish {
+    ($expr:expr,) => {
+        $expr
+    };
+    ($expr:expr, $($rest:tt)+) => {
+        compile_error!(
+            "unsupported expression; use literals, identifiers, field access, +, -, *, unary -, or square(x)"
+        )
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_dd_call {
+    (($callback:ident), $expr:expr, $($rest:tt)*) => {
+        $callback!($expr, $($rest)*)
+    };
+    (($callback:ident, $($args:tt)+), $expr:expr, $($rest:tt)*) => {
+        $callback!($($args)+, $expr, $($rest)*)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_dd_expr {
+    ($($tokens:tt)+) => {
+        $crate::_apfp_dd_add!((_apfp_dd_finish); $($tokens)+)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_dd_add {
+    ($cb:tt; $($tokens:tt)+) => {
+        $crate::_apfp_dd_mul!((_apfp_dd_add_tail, $cb); $($tokens)+)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_dd_add_tail {
+    ($cb:tt, $left:expr, + $($rest:tt)+) => {
+        $crate::_apfp_dd_mul!((_apfp_dd_add_fold, $cb, $left, +); $($rest)+)
+    };
+    ($cb:tt, $left:expr, - $($rest:tt)+) => {
+        $crate::_apfp_dd_mul!((_apfp_dd_add_fold, $cb, $left, -); $($rest)+)
+    };
+    ($cb:tt, $left:expr, $($rest:tt)*) => {
+        $crate::_apfp_dd_call!($cb, $left, $($rest)*)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_dd_add_fold {
+    ($cb:tt, $left:expr, +, $right:expr, $($rest:tt)*) => {
+        $crate::_apfp_dd_add_tail!(
+            $cb,
+            $crate::analysis::adaptive_signum::dd_add($left, $right),
+            $($rest)*
+        )
+    };
+    ($cb:tt, $left:expr, -, $right:expr, $($rest:tt)*) => {
+        $crate::_apfp_dd_add_tail!(
+            $cb,
+            $crate::analysis::adaptive_signum::dd_sub($left, $right),
+            $($rest)*
+        )
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_dd_mul {
+    ($cb:tt; $($tokens:tt)+) => {
+        $crate::_apfp_dd_unary!((_apfp_dd_mul_tail, $cb); $($tokens)+)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_dd_mul_tail {
+    ($cb:tt, $left:expr, * $($rest:tt)+) => {
+        $crate::_apfp_dd_unary!((_apfp_dd_mul_fold, $cb, $left); $($rest)+)
+    };
+    ($cb:tt, $left:expr, $($rest:tt)*) => {
+        $crate::_apfp_dd_call!($cb, $left, $($rest)*)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_dd_mul_fold {
+    ($cb:tt, $left:expr, $right:expr, $($rest:tt)*) => {
+        $crate::_apfp_dd_mul_tail!(
+            $cb,
+            $crate::analysis::adaptive_signum::dd_mul($left, $right),
+            $($rest)*
+        )
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_dd_unary {
+    ($cb:tt; - $($rest:tt)+) => {
+        $crate::_apfp_dd_unary!((_apfp_dd_unary_neg, $cb); $($rest)+)
+    };
+    ($cb:tt; $($tokens:tt)+) => {
+        $crate::_apfp_dd_atom!($cb; $($tokens)+)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_dd_unary_neg {
+    ($cb:tt, $expr:expr, $($rest:tt)*) => {
+        $crate::_apfp_dd_call!(
+            $cb,
+            $crate::analysis::adaptive_signum::dd_neg($expr),
+            $($rest)*
+        )
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_dd_atom {
+    ($cb:tt; square ( $($inner:tt)+ ) $($rest:tt)*) => {
+        $crate::_apfp_dd_call!(
+            $cb,
+            $crate::analysis::adaptive_signum::dd_square(
+                $crate::_apfp_dd_expr!($($inner)+)
+            ),
+            $($rest)*
+        )
+    };
+    ($cb:tt; ( $($inner:tt)+ ) $($rest:tt)*) => {
+        $crate::_apfp_dd_call!(
+            $cb,
+            $crate::_apfp_dd_expr!($($inner)+),
+            $($rest)*
+        )
+    };
+    ($cb:tt; $base:ident . $field:ident $( . $tail:ident )* $($rest:tt)*) => {
+        $crate::_apfp_dd_call!(
+            $cb,
+            $crate::analysis::adaptive_signum::dd_from(
+                ($base.$field $(.$tail)*) as f64
+            ),
+            $($rest)*
+        )
+    };
+    ($cb:tt; $lit:literal $($rest:tt)*) => {
+        $crate::_apfp_dd_call!(
+            $cb,
+            $crate::analysis::adaptive_signum::dd_from(($lit) as f64),
+            $($rest)*
+        )
+    };
+    ($cb:tt; $ident:ident ( $($inner:tt)* ) $($rest:tt)*) => {
+        compile_error!("unsupported function call; only square(x) is supported")
+    };
+    ($cb:tt; $ident:ident $($rest:tt)*) => {
+        $crate::_apfp_dd_call!(
+            $cb,
+            $crate::analysis::adaptive_signum::dd_from(($ident) as f64),
+            $($rest)*
+        )
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_ast_finish {
+    ($expr:expr,) => {
+        $expr
+    };
+    ($expr:expr, $($rest:tt)+) => {
+        compile_error!(
+            "unsupported expression; use literals, identifiers, field access, +, -, *, unary -, or square(x)"
+        )
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_ast_call {
+    (($callback:ident), $expr:expr, $($rest:tt)*) => {
+        $callback!($expr, $($rest)*)
+    };
+    (($callback:ident, $($args:tt)+), $expr:expr, $($rest:tt)*) => {
+        $callback!($($args)+, $expr, $($rest)*)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_ast_expr {
+    ($($tokens:tt)+) => {
+        $crate::_apfp_ast_add!((_apfp_ast_finish); $($tokens)+)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_ast_add {
+    ($cb:tt; $($tokens:tt)+) => {
+        $crate::_apfp_ast_mul!((_apfp_ast_add_tail, $cb); $($tokens)+)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_ast_add_tail {
+    ($cb:tt, $left:expr, + $($rest:tt)+) => {
+        $crate::_apfp_ast_mul!((_apfp_ast_add_fold, $cb, $left, +); $($rest)+)
+    };
+    ($cb:tt, $left:expr, - $($rest:tt)+) => {
+        $crate::_apfp_ast_mul!((_apfp_ast_add_fold, $cb, $left, -); $($rest)+)
+    };
+    ($cb:tt, $left:expr, $($rest:tt)*) => {
+        $crate::_apfp_ast_call!($cb, $left, $($rest)*)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_ast_add_fold {
+    ($cb:tt, $left:expr, +, $right:expr, $($rest:tt)*) => {
+        $crate::_apfp_ast_add_tail!(
+            $cb,
+            ($left) + ($right),
+            $($rest)*
+        )
+    };
+    ($cb:tt, $left:expr, -, $right:expr, $($rest:tt)*) => {
+        $crate::_apfp_ast_add_tail!(
+            $cb,
+            ($left) - ($right),
+            $($rest)*
+        )
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_ast_mul {
+    ($cb:tt; $($tokens:tt)+) => {
+        $crate::_apfp_ast_unary!((_apfp_ast_mul_tail, $cb); $($tokens)+)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_ast_mul_tail {
+    ($cb:tt, $left:expr, * $($rest:tt)+) => {
+        $crate::_apfp_ast_unary!((_apfp_ast_mul_fold, $cb, $left); $($rest)+)
+    };
+    ($cb:tt, $left:expr, $($rest:tt)*) => {
+        $crate::_apfp_ast_call!($cb, $left, $($rest)*)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_ast_mul_fold {
+    ($cb:tt, $left:expr, $right:expr, $($rest:tt)*) => {
+        $crate::_apfp_ast_mul_tail!(
+            $cb,
+            ($left) * ($right),
+            $($rest)*
+        )
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_ast_unary {
+    ($cb:tt; - $($rest:tt)+) => {
+        $crate::_apfp_ast_unary!((_apfp_ast_unary_neg, $cb); $($rest)+)
+    };
+    ($cb:tt; $($tokens:tt)+) => {
+        $crate::_apfp_ast_atom!($cb; $($tokens)+)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_ast_unary_neg {
+    ($cb:tt, $expr:expr, $($rest:tt)*) => {
+        $crate::_apfp_ast_call!($cb, -($expr), $($rest)*)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! _apfp_ast_atom {
+    ($cb:tt; square ( $($inner:tt)+ ) $($rest:tt)*) => {
+        $crate::_apfp_ast_call!(
+            $cb,
+            $crate::analysis::adaptive_signum::square(
+                $crate::_apfp_ast_expr!($($inner)+)
+            ),
+            $($rest)*
+        )
+    };
+    ($cb:tt; ( $($inner:tt)+ ) $($rest:tt)*) => {
+        $crate::_apfp_ast_call!(
+            $cb,
+            $crate::_apfp_ast_expr!($($inner)+),
+            $($rest)*
+        )
+    };
+    ($cb:tt; $base:ident . $field:ident $( . $tail:ident )* $($rest:tt)*) => {
+        $crate::_apfp_ast_call!(
+            $cb,
+            {
+                let value = ($base.$field $(.$tail)*) as f64;
+                $crate::analysis::adaptive_signum::Scalar(value)
+            },
+            $($rest)*
+        )
+    };
+    ($cb:tt; $lit:literal $($rest:tt)*) => {
+        $crate::_apfp_ast_call!(
+            $cb,
+            {
+                let value = ($lit) as f64;
+                $crate::analysis::adaptive_signum::Scalar(value)
+            },
+            $($rest)*
+        )
+    };
+    ($cb:tt; $ident:ident ( $($inner:tt)* ) $($rest:tt)*) => {
+        compile_error!("unsupported function call; only square(x) is supported")
+    };
+    ($cb:tt; $ident:ident $($rest:tt)*) => {
+        $crate::_apfp_ast_call!(
+            $cb,
+            {
+                let value = ($ident) as f64;
+                $crate::analysis::adaptive_signum::Scalar(value)
+            },
+            $($rest)*
+        )
+    };
+}
+
+#[macro_export]
+macro_rules! apfp_signum {
+    ($($tokens:tt)+) => {{
+        #[allow(unused_imports)]
+        use $crate::{
+            _apfp_ast_add, _apfp_ast_add_fold, _apfp_ast_add_tail, _apfp_ast_atom,
+            _apfp_ast_call, _apfp_ast_expr, _apfp_ast_finish, _apfp_ast_mul,
+            _apfp_ast_mul_fold, _apfp_ast_mul_tail, _apfp_ast_unary,
+            _apfp_ast_unary_neg, _apfp_dd_add, _apfp_dd_add_fold, _apfp_dd_add_tail,
+            _apfp_dd_atom, _apfp_dd_call, _apfp_dd_expr, _apfp_dd_finish, _apfp_dd_mul,
+            _apfp_dd_mul_fold, _apfp_dd_mul_tail, _apfp_dd_unary, _apfp_dd_unary_neg,
+            _apfp_fast_add, _apfp_fast_add_fold, _apfp_fast_add_tail, _apfp_fast_atom,
+            _apfp_fast_call, _apfp_fast_expr, _apfp_fast_finish, _apfp_fast_mul,
+            _apfp_fast_mul_fold, _apfp_fast_mul_tail, _apfp_fast_unary,
+            _apfp_fast_unary_neg, _apfp_type_add, _apfp_type_add_fold, _apfp_type_add_tail,
+            _apfp_type_atom, _apfp_type_call, _apfp_type_expr, _apfp_type_finish,
+            _apfp_type_mul, _apfp_type_mul_fold, _apfp_type_mul_tail, _apfp_type_unary,
+            _apfp_type_unary_neg,
+        };
+        use $crate::analysis::adaptive_signum as _apfp;
+        type ExprType = $crate::_apfp_type_expr!($($tokens)+);
+        let (_apfp_value, _apfp_abs) = $crate::_apfp_fast_expr!($($tokens)+);
+        let _apfp_gamma =
+            _apfp::gamma_from_ops(<ExprType as _apfp::OperationCount>::OPERATION_COUNT);
+        let _apfp_err = _apfp_gamma * _apfp_abs;
+        if _apfp_value > _apfp_err {
+            1
+        } else if _apfp_value < -_apfp_err {
+            -1
+        } else {
+            let _apfp_dd_value = $crate::_apfp_dd_expr!($($tokens)+);
+            if let Some(sign) = _apfp::dd_signum(_apfp_dd_value) {
+                sign
+            } else {
+                let expr: ExprType = $crate::_apfp_ast_expr!($($tokens)+);
+                let mut buffer = core::mem::MaybeUninit::<
+                    [f64; <ExprType as _apfp::Signum>::STACK_LEN],
+                >::uninit();
+                let buffer = unsafe { &mut *buffer.as_mut_ptr() };
+                _apfp::signum_exact(expr, buffer)
+            }
+        }
+    }};
 }
 
 #[inline(always)]

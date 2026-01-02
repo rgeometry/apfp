@@ -1,27 +1,22 @@
 //! Adaptive, allocation-free sign computation for arbitrary expressions.
 //!
-//! This module provides a general solution for evaluating the sign of a static
-//! arithmetic expression without dynamic allocation. The core idea is:
-//! 1) Evaluate the expression in `f64` and compute a conservative error bound
-//!    based on the exact operation count and the magnitude of subexpressions.
-//! 2) If the sign is provably correct, return it immediately.
-//! 3) Otherwise, fall back to exact expansion arithmetic using fixed stack
-//!    buffers computed from the expression type.
-//!
-//! A declarative macro (`apfp_signum!`) expands an input expression into a static AST
-//! of expression types defined here and calls `signum_adaptive`, which handles
-//! both the fast filter and the exact fallback.
+//! This module is mostly internal. The public API is:
+//! - [`apfp_signum!`](crate::apfp_signum) macro for computing the sign of an expression
+//! - [`square`] function for use within the macro
 //!
 //! # Example
 //! ```rust
-//! # use apfp::{apfp_signum, Coord};
-//! # use apfp::analysis::adaptive_signum::square;
-//! # use apfp::analysis::adaptive_signum;
+//! use apfp::{apfp_signum, square, Coord};
+//!
 //! let a = Coord::new(0.0, 0.0);
 //! let b = Coord::new(1.0, 0.0);
 //! let c = Coord::new(0.0, 1.0);
+//!
+//! // Compute sign of orient2d determinant
 //! let sign = apfp_signum!((a.x - c.x) * (b.y - c.y) - (a.y - c.y) * (b.x - c.x));
 //! assert_eq!(sign, 1);
+//!
+//! // Compute sign of squared distance comparison
 //! let dist = apfp_signum!(
 //!     (square(a.x - c.x) + square(a.y - c.y))
 //!         - (square(b.x - c.x) + square(b.y - c.y))
@@ -33,15 +28,18 @@ use crate::expansion::{fast_two_sum, two_product, two_sum};
 
 const U: f64 = 0.5 * f64::EPSILON;
 
+#[doc(hidden)]
 #[derive(Debug, Clone, Copy)]
 pub struct Scalar(pub f64);
 
+#[doc(hidden)]
 #[derive(Debug, Clone, Copy)]
 pub struct Dd {
     pub hi: f64,
     pub lo: f64,
 }
 
+#[doc(hidden)]
 #[inline(always)]
 pub const fn gamma_from_ops(op_count: usize) -> f64 {
     if op_count == 0 {
@@ -52,11 +50,13 @@ pub const fn gamma_from_ops(op_count: usize) -> f64 {
     (n * u) / (1.0 - n * u)
 }
 
+#[doc(hidden)]
 #[inline(always)]
 pub fn dd_from(value: f64) -> Dd {
     Dd { hi: value, lo: 0.0 }
 }
 
+#[doc(hidden)]
 #[inline(always)]
 pub fn dd_neg(value: Dd) -> Dd {
     Dd {
@@ -65,6 +65,7 @@ pub fn dd_neg(value: Dd) -> Dd {
     }
 }
 
+#[doc(hidden)]
 #[inline(always)]
 pub fn dd_add(lhs: Dd, rhs: Dd) -> Dd {
     let (sum, err) = two_sum(lhs.hi, rhs.hi);
@@ -75,11 +76,13 @@ pub fn dd_add(lhs: Dd, rhs: Dd) -> Dd {
     Dd { hi, lo: lo2 }
 }
 
+#[doc(hidden)]
 #[inline(always)]
 pub fn dd_sub(lhs: Dd, rhs: Dd) -> Dd {
     dd_add(lhs, dd_neg(rhs))
 }
 
+#[doc(hidden)]
 #[inline(always)]
 pub fn dd_mul(lhs: Dd, rhs: Dd) -> Dd {
     let (prod, err) = two_product(lhs.hi, rhs.hi);
@@ -90,11 +93,13 @@ pub fn dd_mul(lhs: Dd, rhs: Dd) -> Dd {
     Dd { hi, lo: lo2 }
 }
 
+#[doc(hidden)]
 #[inline(always)]
 pub fn dd_square(value: Dd) -> Dd {
     dd_mul(value, value)
 }
 
+#[doc(hidden)]
 #[inline(always)]
 pub fn dd_signum(value: Dd) -> Option<i32> {
     let bound = value.lo.abs();
@@ -107,12 +112,29 @@ pub fn dd_signum(value: Dd) -> Option<i32> {
     }
 }
 
+#[doc(hidden)]
 pub struct Negate<T>(pub T);
+#[doc(hidden)]
 pub struct Square<T>(pub T);
+#[doc(hidden)]
 pub struct Sum<A, B>(pub A, pub B);
+#[doc(hidden)]
 pub struct Product<A, B>(pub A, pub B);
+#[doc(hidden)]
 pub struct Diff<A, B>(pub A, pub B);
 
+/// Wraps a value for use in the `apfp_signum!` macro to compute its square.
+///
+/// # Example
+/// ```rust
+/// use apfp::{apfp_signum, square};
+///
+/// let x = 3.0_f64;
+/// let y = 2.0_f64;
+/// // Compute sign of x^2 - y^2
+/// let sign = apfp_signum!(square(x) - square(y));
+/// assert_eq!(sign, 1); // 9 - 4 = 5 > 0
+/// ```
 #[inline(always)]
 pub fn square<T>(value: T) -> Square<T> {
     Square(value)
@@ -194,18 +216,22 @@ impl_ops!(Sum[A, B]);
 impl_ops!(Product[A, B]);
 impl_ops!(Diff[A, B]);
 
+#[doc(hidden)]
 pub trait Eval {
     fn eval(&self) -> f64;
 }
 
+#[doc(hidden)]
 pub trait EvalBounded {
     fn eval_bounded(&self) -> (f64, f64);
 }
 
+#[doc(hidden)]
 pub trait OperationCount {
     const OPERATION_COUNT: usize;
 }
 
+#[doc(hidden)]
 pub trait Signum {
     const MAX_LEN: usize;
     const STACK_LEN: usize;
@@ -218,6 +244,7 @@ pub trait Signum {
     }
 }
 
+#[doc(hidden)]
 #[inline(always)]
 pub fn signum_adaptive<T: EvalBounded + OperationCount + Signum>(
     expr: T,
@@ -233,6 +260,7 @@ pub fn signum_adaptive<T: EvalBounded + OperationCount + Signum>(
     expr.signum(buffer)
 }
 
+#[doc(hidden)]
 #[inline(always)]
 pub fn signum_exact<T: Signum>(expr: T, buffer: &mut [f64]) -> i32 {
     expr.signum(buffer)
@@ -1306,6 +1334,43 @@ macro_rules! _apfp_ast_atom {
     };
 }
 
+/// Computes the exact sign of an arithmetic expression.
+///
+/// Returns `1` if the expression is positive, `-1` if negative, and `0` if exactly zero.
+///
+/// The macro uses a three-stage adaptive algorithm:
+/// 1. **Fast path**: Evaluate in `f64` with error bounds. If the result is clearly
+///    positive or negative, return immediately.
+/// 2. **Double-double path**: If the fast path is inconclusive, use double-double
+///    arithmetic (~32 digits of precision) to determine the sign.
+/// 3. **Exact path**: If still inconclusive, fall back to exact expansion arithmetic.
+///
+/// # Supported Operations
+/// - Addition (`+`), subtraction (`-`), multiplication (`*`)
+/// - Unary negation (`-x`)
+/// - [`square(x)`](crate::square) for computing `x * x`
+/// - Parentheses for grouping
+/// - Literals, variables, and field access (`point.x`)
+///
+/// # Example
+/// ```rust
+/// use apfp::{apfp_signum, square};
+///
+/// // Simple comparison
+/// let x = 1.0_f64;
+/// let y = 2.0_f64;
+/// assert_eq!(apfp_signum!(x - y), -1);
+///
+/// // With squares
+/// assert_eq!(apfp_signum!(square(3.0) - square(2.0)), 1); // 9 - 4 = 5 > 0
+///
+/// // Complex expression
+/// let a = 1e16_f64;
+/// let b = 1.0_f64;
+/// // This would lose precision with naive f64 arithmetic
+/// let sign = apfp_signum!((a + b) - a - b);
+/// assert_eq!(sign, 0);
+/// ```
 #[macro_export]
 macro_rules! apfp_signum {
     ($($tokens:tt)+) => {{

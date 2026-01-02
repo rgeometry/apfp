@@ -1,65 +1,54 @@
+//! Benchmarks for cmp_dist implementations.
+//!
+//! Measures per-call performance for:
+//! - Naive f64 (baseline, non-robust)
+//! - apfp (our adaptive implementation)
+//! - apfp on each code path (fast, DD, exact)
+//! - Rational (exact but slow baseline)
+
 use apfp::analysis::adaptive_signum::{
-    Dd, dd_add, dd_from, dd_signum, dd_square, dd_sub, gamma_from_ops,
+    dd_add, dd_from, dd_signum, dd_square, dd_sub, gamma_from_ops,
 };
-use apfp::{Coord, apfp_signum, cmp_dist};
-use criterion::{Criterion, criterion_group, criterion_main};
+use apfp::{Coord, cmp_dist};
+use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use num_rational::BigRational;
 use num_traits::Signed;
 use std::cmp::Ordering;
 use std::hint::black_box;
-use std::time::Duration;
-
-const SAMPLE_COUNT: usize = 5_000;
-const STAGE_SAMPLE_COUNT: usize = 50;
-const STAGE_MAX_ATTEMPTS: usize = 200_000;
-const MAG_LIMIT: f64 = 1.0e6;
-
-const EPS_LIST: [f64; 12] = [
-    1.0e-2, 1.0e-4, 1.0e-6, 1.0e-8, 1.0e-10, 1.0e-12, 1.0e-14, 1.0e-16, 1.0e-18, 1.0e-20, 1.0e-24,
-    1.0e-30,
-];
 
 const LCG_A: u64 = 6364136223846793005;
 const LCG_C: u64 = 1;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Stage {
-    Fast,
-    Dd,
-    Exact,
-}
+/// Type alias for benchmark test cases: (origin, p, q) coordinate triples.
+type StageCases = Vec<(Coord, Coord, Coord)>;
 
-fn cmp_dist_fast(origin: &Coord, p: &Coord, q: &Coord) -> Ordering {
+/// Simple f64 distance comparison - no error checking, may give wrong results.
+fn cmp_dist_naive(origin: &Coord, p: &Coord, q: &Coord) -> Ordering {
     let pdx = p.x - origin.x;
     let pdy = p.y - origin.y;
     let qdx = q.x - origin.x;
     let qdy = q.y - origin.y;
     let pdist = pdx * pdx + pdy * pdy;
     let qdist = qdx * qdx + qdy * qdy;
-    if pdist > qdist {
-        Ordering::Greater
-    } else if pdist < qdist {
-        Ordering::Less
-    } else {
-        Ordering::Equal
-    }
+    pdist.partial_cmp(&qdist).unwrap_or(Ordering::Equal)
 }
 
+/// Exact distance comparison using arbitrary precision rationals.
 fn cmp_dist_rational(origin: &Coord, p: &Coord, q: &Coord) -> Ordering {
-    let ox = BigRational::from_float(origin.x).expect("inputs must be finite");
-    let oy = BigRational::from_float(origin.y).expect("inputs must be finite");
-    let px = BigRational::from_float(p.x).expect("inputs must be finite");
-    let py = BigRational::from_float(p.y).expect("inputs must be finite");
-    let qx = BigRational::from_float(q.x).expect("inputs must be finite");
-    let qy = BigRational::from_float(q.y).expect("inputs must be finite");
+    let ox = BigRational::from_float(origin.x).unwrap();
+    let oy = BigRational::from_float(origin.y).unwrap();
+    let px = BigRational::from_float(p.x).unwrap();
+    let py = BigRational::from_float(p.y).unwrap();
+    let qx = BigRational::from_float(q.x).unwrap();
+    let qy = BigRational::from_float(q.y).unwrap();
 
     let pdx = &px - &ox;
     let pdy = &py - &oy;
     let qdx = &qx - &ox;
     let qdy = &qy - &oy;
 
-    let pdist = (&pdx * &pdx) + (&pdy * &pdy);
-    let qdist = (&qdx * &qdx) + (&qdy * &qdy);
+    let pdist = &pdx * &pdx + &pdy * &pdy;
+    let qdist = &qdx * &qdx + &qdy * &qdy;
     let diff = pdist - qdist;
 
     if diff.is_positive() {
@@ -71,67 +60,206 @@ fn cmp_dist_rational(origin: &Coord, p: &Coord, q: &Coord) -> Ordering {
     }
 }
 
-fn cmp_dist_apfp_batch(samples: &[(Coord, Coord, Coord)]) {
-    for (origin, p, q) in samples {
-        black_box(cmp_dist(origin, p, q));
+/// Classify which stage cmp_dist will use for given inputs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Stage {
+    Fast,
+    Dd,
+    Exact,
+}
+
+fn classify_cmp_dist(origin: &Coord, p: &Coord, q: &Coord) -> Stage {
+    let pdx = p.x - origin.x;
+    let pdy = p.y - origin.y;
+    let qdx = q.x - origin.x;
+    let qdy = q.y - origin.y;
+    let pdist = pdx * pdx + pdy * pdy;
+    let qdist = qdx * qdx + qdy * qdy;
+    let diff = pdist - qdist;
+    let sum = pdist.abs() + qdist.abs();
+    let errbound = gamma_from_ops(11) * sum;
+
+    if diff.abs() > errbound {
+        return Stage::Fast;
+    }
+
+    // Check DD stage
+    let dd_pdx = dd_sub(dd_from(p.x), dd_from(origin.x));
+    let dd_pdy = dd_sub(dd_from(p.y), dd_from(origin.y));
+    let dd_qdx = dd_sub(dd_from(q.x), dd_from(origin.x));
+    let dd_qdy = dd_sub(dd_from(q.y), dd_from(origin.y));
+    let dd_pdist = dd_add(dd_square(dd_pdx), dd_square(dd_pdy));
+    let dd_qdist = dd_add(dd_square(dd_qdx), dd_square(dd_qdy));
+    let dd_diff = dd_sub(dd_pdist, dd_qdist);
+
+    if dd_signum(dd_diff).is_some() {
+        Stage::Dd
+    } else {
+        Stage::Exact
     }
 }
 
-fn cmp_dist_apfp_signum_batch(samples: &[(Coord, Coord, Coord)]) {
-    for (origin, p, q) in samples {
-        let sign = apfp_signum!(
-            (square(p.x - origin.x) + square(p.y - origin.y))
-                - (square(q.x - origin.x) + square(q.y - origin.y))
-        );
-        black_box(sign);
-    }
-}
+/// Find cases for each stage by searching.
+fn find_stage_cases() -> (StageCases, StageCases, StageCases) {
+    let mut fast_cases = Vec::new();
+    let mut dd_cases = Vec::new();
+    let mut exact_cases = Vec::new();
 
-fn cmp_dist_fast_batch(samples: &[(Coord, Coord, Coord)]) {
-    for (origin, p, q) in samples {
-        black_box(cmp_dist_fast(origin, p, q));
-    }
-}
+    let mut state = 0xfedcba9876543210u64;
+    let origin = Coord::new(0.0, 0.0);
 
-fn cmp_dist_rational_batch(samples: &[(Coord, Coord, Coord)]) {
-    for (origin, p, q) in samples {
-        black_box(cmp_dist_rational(origin, p, q));
+    // Find fast cases (easy - random points almost always work)
+    while fast_cases.len() < 100 {
+        let p = Coord::new(lcg(&mut state), lcg(&mut state));
+        let q = Coord::new(lcg(&mut state), lcg(&mut state));
+        if classify_cmp_dist(&origin, &p, &q) == Stage::Fast {
+            fast_cases.push((origin, p, q));
+        }
     }
+
+    // Find DD cases: points at nearly equal distances
+    'dd_search: for r in [10.0, 100.0, 1000.0] {
+        for &eps in &[1e-11, 1e-12, 1e-13, 1e-14] {
+            let p = Coord::new(r, 0.0);
+            let q = Coord::new(r + eps, 0.0);
+            if classify_cmp_dist(&origin, &p, &q) == Stage::Dd {
+                dd_cases.push((origin, p, q));
+                if dd_cases.len() >= 100 {
+                    break 'dd_search;
+                }
+            }
+        }
+    }
+
+    // Find exact cases: points at exactly equal distances
+    'exact_search: for r in [1.0, 10.0, 100.0, 1000.0] {
+        // Points at same distance but different angles
+        let p = Coord::new(r, 0.0);
+        let q = Coord::new(0.0, r);
+        if classify_cmp_dist(&origin, &p, &q) == Stage::Exact {
+            exact_cases.push((origin, p, q));
+            if exact_cases.len() >= 100 {
+                break 'exact_search;
+            }
+        }
+        // Try other angle combinations
+        let q2 = Coord::new(r * 0.6, r * 0.8); // 3-4-5 triangle scaling
+        if classify_cmp_dist(&origin, &p, &q2) == Stage::Exact {
+            exact_cases.push((origin, p, q2));
+            if exact_cases.len() >= 100 {
+                break 'exact_search;
+            }
+        }
+    }
+
+    // Fallback: duplicate what we have
+    while dd_cases.len() < 100 {
+        if dd_cases.is_empty() {
+            // Hardcoded fallback
+            dd_cases.push((
+                origin,
+                Coord::new(100.0, 0.0),
+                Coord::new(100.0 + 1e-13, 0.0),
+            ));
+        } else {
+            dd_cases.push(dd_cases[0]);
+        }
+    }
+    while exact_cases.len() < 100 {
+        if exact_cases.is_empty() {
+            exact_cases.push((origin, Coord::new(1.0, 0.0), Coord::new(0.0, 1.0)));
+        } else {
+            exact_cases.push(exact_cases[0]);
+        }
+    }
+
+    (fast_cases, dd_cases, exact_cases)
 }
 
 fn bench_cmp_dist(c: &mut Criterion) {
-    let samples = generate_samples(SAMPLE_COUNT);
-    let stage_fast = generate_stage_samples(STAGE_SAMPLE_COUNT, Stage::Fast);
-    let stage_dd = generate_stage_samples(STAGE_SAMPLE_COUNT, Stage::Dd);
-    let stage_exact = generate_stage_samples(STAGE_SAMPLE_COUNT, Stage::Exact);
-    let mut group = c.benchmark_group("cmp_dist_implementations");
-    group
-        .sample_size(10)
-        .warm_up_time(Duration::from_millis(500))
-        .measurement_time(Duration::from_secs(1));
+    let mut group = c.benchmark_group("cmp_dist");
+    let batch_size = BatchSize::SmallInput;
 
-    group.bench_function("cmp_dist_fast", |b| {
-        b.iter(|| cmp_dist_fast_batch(black_box(&samples)))
+    let (fast_cases, dd_cases, exact_cases) = find_stage_cases();
+
+    eprintln!(
+        "Stage samples: fast={}, dd={}, exact={}",
+        fast_cases.len(),
+        dd_cases.len(),
+        exact_cases.len()
+    );
+
+    let make_random_setup = || {
+        let mut state = 0xfedcba9876543210u64;
+        move || {
+            let origin = Coord::new(lcg(&mut state), lcg(&mut state));
+            let p = Coord::new(lcg(&mut state), lcg(&mut state));
+            let q = Coord::new(lcg(&mut state), lcg(&mut state));
+            (origin, p, q)
+        }
+    };
+
+    let make_stage_setup = |cases: Vec<(Coord, Coord, Coord)>| {
+        let mut idx = 0usize;
+        move || {
+            let sample = cases[idx % cases.len()];
+            idx = idx.wrapping_add(1);
+            sample
+        }
+    };
+
+    // === Main comparison benchmarks ===
+
+    group.bench_function("naive_f64", |bencher| {
+        bencher.iter_batched(
+            make_random_setup(),
+            |(origin, p, q)| black_box(cmp_dist_naive(&origin, &p, &q)),
+            batch_size,
+        )
     });
 
-    group.bench_function("cmp_dist_apfp", |b| {
-        b.iter(|| cmp_dist_apfp_batch(black_box(&samples)))
+    group.bench_function("apfp_random", |bencher| {
+        bencher.iter_batched(
+            make_random_setup(),
+            |(origin, p, q)| black_box(cmp_dist(&origin, &p, &q)),
+            batch_size,
+        )
     });
 
-    group.bench_function("cmp_dist_apfp_fast_stage", |b| {
-        b.iter(|| cmp_dist_apfp_signum_batch(black_box(&stage_fast)))
+    // === Stage-specific benchmarks ===
+
+    group.bench_function("apfp_fast_path", |bencher| {
+        bencher.iter_batched(
+            make_stage_setup(fast_cases.clone()),
+            |(origin, p, q)| black_box(cmp_dist(&origin, &p, &q)),
+            batch_size,
+        )
     });
 
-    group.bench_function("cmp_dist_apfp_dd_stage", |b| {
-        b.iter(|| cmp_dist_apfp_signum_batch(black_box(&stage_dd)))
+    group.bench_function("apfp_dd_path", |bencher| {
+        bencher.iter_batched(
+            make_stage_setup(dd_cases.clone()),
+            |(origin, p, q)| black_box(cmp_dist(&origin, &p, &q)),
+            batch_size,
+        )
     });
 
-    group.bench_function("cmp_dist_apfp_exact_stage", |b| {
-        b.iter(|| cmp_dist_apfp_signum_batch(black_box(&stage_exact)))
+    group.bench_function("apfp_exact_path", |bencher| {
+        bencher.iter_batched(
+            make_stage_setup(exact_cases.clone()),
+            |(origin, p, q)| black_box(cmp_dist(&origin, &p, &q)),
+            batch_size,
+        )
     });
 
-    group.bench_function("cmp_dist_rational", |b| {
-        b.iter(|| cmp_dist_rational_batch(black_box(&samples)))
+    // === Reference: exact rational arithmetic ===
+
+    group.bench_function("rational", |bencher| {
+        bencher.iter_batched(
+            make_random_setup(),
+            |(origin, p, q)| black_box(cmp_dist_rational(&origin, &p, &q)),
+            batch_size,
+        )
     });
 
     group.finish();
@@ -140,142 +268,8 @@ fn bench_cmp_dist(c: &mut Criterion) {
 criterion_group!(benches, bench_cmp_dist);
 criterion_main!(benches);
 
-fn generate_samples(count: usize) -> Vec<(Coord, Coord, Coord)> {
-    let mut state = 0x1234_5678_9abc_def0u64;
-    let mut samples = Vec::with_capacity(count);
-    while samples.len() < count {
-        let ox = lcg(&mut state);
-        let oy = lcg(&mut state);
-        let px = lcg(&mut state);
-        let py = lcg(&mut state);
-        let qx = lcg(&mut state);
-        let qy = lcg(&mut state);
-        if !within_limits(&[ox, oy, px, py, qx, qy]) {
-            continue;
-        }
-        samples.push((Coord::new(ox, oy), Coord::new(px, py), Coord::new(qx, qy)));
-    }
-    samples
-}
-
-fn generate_stage_samples(count: usize, stage: Stage) -> Vec<(Coord, Coord, Coord)> {
-    let mut seed = 0x1234_5678_9abc_def0u64 ^ (stage as u64).wrapping_mul(0x9e3779b97f4a7c15);
-    let mut attempts = 0usize;
-    let mut sample = None;
-    while sample.is_none() && attempts < STAGE_MAX_ATTEMPTS {
-        attempts += 1;
-        sample = find_cmp_dist_case(&mut seed, stage);
-    }
-    if sample.is_none() {
-        sample = find_cmp_dist_case_deterministic(stage);
-    }
-    let Some(sample) = sample else {
-        return Vec::new();
-    };
-    vec![sample; count]
-}
-
-fn find_cmp_dist_case(seed: &mut u64, stage: Stage) -> Option<(Coord, Coord, Coord)> {
-    let origin = Coord::new(0.0, 0.0);
-    for _ in 0..400 {
-        if stage == Stage::Fast {
-            let px = lcg_range(seed, -1.0e3, 1.0e3);
-            let py = lcg_range(seed, -1.0e3, 1.0e3);
-            let qx = lcg_range(seed, -1.0e3, 1.0e3);
-            let qy = lcg_range(seed, -1.0e3, 1.0e3);
-            let p = Coord::new(px, py);
-            let q = Coord::new(qx, qy);
-            if classify_cmp_dist(&origin, &p, &q) == Some(stage) {
-                return Some((origin, p, q));
-            }
-            continue;
-        }
-
-        let r = lcg_range(seed, 1.0e3, 1.0e6);
-        for &eps in &EPS_LIST {
-            let p = Coord::new(r, 0.0);
-            let q = Coord::new(r + eps, 0.0);
-            if classify_cmp_dist(&origin, &p, &q) == Some(stage) {
-                return Some((origin, p, q));
-            }
-        }
-    }
-    None
-}
-
-fn find_cmp_dist_case_deterministic(stage: Stage) -> Option<(Coord, Coord, Coord)> {
-    let origin = Coord::new(0.0, 0.0);
-    let radii = [1.0e3, 1.0e6, 1.0e9, 1.0e12];
-    for &r in &radii {
-        for &eps in &EPS_LIST {
-            let p = Coord::new(r, 0.0);
-            let q = Coord::new(r + eps, 0.0);
-            if classify_cmp_dist(&origin, &p, &q) == Some(stage) {
-                return Some((origin, p, q));
-            }
-        }
-    }
-    None
-}
-
-fn classify_cmp_dist(origin: &Coord, p: &Coord, q: &Coord) -> Option<Stage> {
-    let ox = origin.x;
-    let oy = origin.y;
-    let px = p.x;
-    let py = p.y;
-    let qx = q.x;
-    let qy = q.y;
-    if !within_limits(&[ox, oy, px, py, qx, qy]) {
-        return None;
-    }
-
-    let pdx = px - ox;
-    let pdy = py - oy;
-    let qdx = qx - ox;
-    let qdy = qy - oy;
-    let pdist = pdx * pdx + pdy * pdy;
-    let qdist = qdx * qdx + qdy * qdy;
-    let diff = pdist - qdist;
-    let sum = pdist.abs() + qdist.abs();
-    let errbound = gamma_from_ops(11) * sum;
-
-    if diff.abs() > errbound {
-        return Some(Stage::Fast);
-    }
-    let dd_value = dd_cmp_dist(ox, oy, px, py, qx, qy);
-    if dd_signum(dd_value).is_some() {
-        Some(Stage::Dd)
-    } else {
-        Some(Stage::Exact)
-    }
-}
-
-fn dd_cmp_dist(ox: f64, oy: f64, px: f64, py: f64, qx: f64, qy: f64) -> Dd {
-    let pdx = dd_sub(dd_from(px), dd_from(ox));
-    let pdy = dd_sub(dd_from(py), dd_from(oy));
-    let qdx = dd_sub(dd_from(qx), dd_from(ox));
-    let qdy = dd_sub(dd_from(qy), dd_from(oy));
-    let pdist = dd_add(dd_square(pdx), dd_square(pdy));
-    let qdist = dd_add(dd_square(qdx), dd_square(qdy));
-    dd_sub(pdist, qdist)
-}
-
 fn lcg(state: &mut u64) -> f64 {
     *state = state.wrapping_mul(LCG_A).wrapping_add(LCG_C);
     let val = ((*state >> 32) as f64) / (u32::MAX as f64);
     (val * 2000.0) - 1000.0
-}
-
-fn lcg_next(state: &mut u64) -> f64 {
-    *state = state.wrapping_mul(LCG_A).wrapping_add(LCG_C);
-    let val = ((*state >> 32) as f64) / (u32::MAX as f64);
-    (val * 2.0) - 1.0
-}
-
-fn lcg_range(state: &mut u64, min: f64, max: f64) -> f64 {
-    min + (max - min) * (lcg_next(state) * 0.5 + 0.5)
-}
-
-fn within_limits(values: &[f64]) -> bool {
-    values.iter().all(|v| v.is_finite() && v.abs() <= MAG_LIMIT)
 }

@@ -36,3 +36,7 @@ harness = false
 [[bench]]
 name = "cmp_dist_bench"
 harness = false
+
+[[bench]]
+name = "orient2d_vec_bench"
+harness = false

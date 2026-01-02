@@ -3,7 +3,7 @@ use apfp::analysis::adaptive_signum::{
     signum_exact,
 };
 use apfp::apfp_signum;
-use apfp::{Coord, GeometryPredicateResult, incircle, orient2d};
+use apfp::{Coord, GeometryPredicateResult, incircle, orient2d, orient2d_vec};
 use geometry_predicates::orient2d as gp_orient2d;
 use ntest::timeout;
 use num_rational::BigRational;
@@ -557,4 +557,200 @@ fn quickcheck_apfp_signum_cmp_dist_dd() {
 #[timeout(8000)]
 fn quickcheck_apfp_signum_cmp_dist_exact() {
     run_qc_seed(|seed| property_apfp_signum_cmp_dist_stage(seed, Stage::Exact));
+}
+
+// ============================================================================
+// orient2d_vec tests
+// ============================================================================
+
+fn orient2d_vec_rational(a: &Coord, v: &Coord, p: &Coord) -> Option<GeometryPredicateResult> {
+    let ax = to_rational(a.x)?;
+    let ay = to_rational(a.y)?;
+    let vx = to_rational(v.x)?;
+    let vy = to_rational(v.y)?;
+    let px = to_rational(p.x)?;
+    let py = to_rational(p.y)?;
+
+    // orient2d_vec(a, v, p) = (a.x - p.x) * v.y - (a.y - p.y) * v.x
+    let det = (&ax - &px) * &vy - (&ay - &py) * &vx;
+    Some(result_from_rational(det))
+}
+
+#[test]
+fn orient2d_vec_basic_ccw() {
+    // Line from origin in direction (1, 0), point above
+    let a = Coord::new(0.0, 0.0);
+    let v = Coord::new(1.0, 0.0);
+    let p = Coord::new(0.5, 1.0);
+    assert_eq!(orient2d_vec(&a, &v, &p), GeometryPredicateResult::Positive);
+}
+
+#[test]
+fn orient2d_vec_basic_cw() {
+    // Line from origin in direction (1, 0), point below
+    let a = Coord::new(0.0, 0.0);
+    let v = Coord::new(1.0, 0.0);
+    let p = Coord::new(0.5, -1.0);
+    assert_eq!(orient2d_vec(&a, &v, &p), GeometryPredicateResult::Negative);
+}
+
+#[test]
+fn orient2d_vec_collinear() {
+    // Line from origin in direction (1, 1), point on line
+    let a = Coord::new(0.0, 0.0);
+    let v = Coord::new(1.0, 1.0);
+    let p = Coord::new(2.0, 2.0);
+    assert_eq!(orient2d_vec(&a, &v, &p), GeometryPredicateResult::Zero);
+}
+
+#[test]
+fn orient2d_vec_matches_orient2d_simple() {
+    // Test that orient2d_vec(a, v, p) == orient2d(a, a+v, p) for simple cases
+    let a = Coord::new(1.0, 2.0);
+    let v = Coord::new(3.0, 4.0);
+    let p = Coord::new(5.0, 6.0);
+    let b = Coord::new(a.x + v.x, a.y + v.y);
+    assert_eq!(orient2d_vec(&a, &v, &p), orient2d(&a, &b, &p));
+}
+
+fn property_orient2d_vec_consistency(
+    ax: f64,
+    ay: f64,
+    vx: f64,
+    vy: f64,
+    px: f64,
+    py: f64,
+) -> TestResult {
+    if !within_limits(&[ax, ay, vx, vy, px, py]) {
+        return TestResult::discard();
+    }
+
+    let a = Coord::new(ax, ay);
+    let v = Coord::new(vx, vy);
+    let p = Coord::new(px, py);
+
+    let ours = orient2d_vec(&a, &v, &p);
+
+    let Some(rational_result) = orient2d_vec_rational(&a, &v, &p) else {
+        return TestResult::discard();
+    };
+
+    TestResult::from_bool(ours == rational_result)
+}
+
+#[test]
+#[timeout(5000)]
+fn quickcheck_orient2d_vec_consistency() {
+    run_qc(property_orient2d_vec_consistency);
+}
+
+fn dd_orient2d_vec(ax: f64, ay: f64, vx: f64, vy: f64, px: f64, py: f64) -> Dd {
+    // (a.x - p.x) * v.y - (a.y - p.y) * v.x
+    let dx = dd_sub(dd_from(ax), dd_from(px));
+    let dy = dd_sub(dd_from(ay), dd_from(py));
+    let prod1 = dd_mul(dx, dd_from(vy));
+    let prod2 = dd_mul(dy, dd_from(vx));
+    dd_sub(prod1, prod2)
+}
+
+fn classify_orient2d_vec(a: &Coord, v: &Coord, p: &Coord) -> Option<Stage> {
+    let ax = a.x;
+    let ay = a.y;
+    let vx = v.x;
+    let vy = v.y;
+    let px = p.x;
+    let py = p.y;
+    if !within_limits(&[ax, ay, vx, vy, px, py]) {
+        return None;
+    }
+
+    let dx = ax - px;
+    let dy = ay - py;
+    let prod1 = dx * vy;
+    let prod2 = dy * vx;
+    let det = prod1 - prod2;
+    let detsum = prod1.abs() + prod2.abs();
+    let errbound = gamma_for_ops(5) * detsum; // 5 ops: 2 subs, 2 muls, 1 sub
+
+    if det.abs() > errbound {
+        return Some(Stage::Fast);
+    }
+    let dd_value = dd_orient2d_vec(ax, ay, vx, vy, px, py);
+    if dd_signum(dd_value).is_some() {
+        Some(Stage::Dd)
+    } else {
+        Some(Stage::Exact)
+    }
+}
+
+fn find_orient2d_vec_case(mut seed: u64, stage: Stage) -> Option<(Coord, Coord, Coord)> {
+    for _ in 0..200 {
+        if stage == Stage::Fast {
+            let ax = lcg_range(&mut seed, -1.0e3, 1.0e3);
+            let ay = lcg_range(&mut seed, -1.0e3, 1.0e3);
+            let vx = lcg_range(&mut seed, -1.0e3, 1.0e3);
+            let vy = lcg_range(&mut seed, -1.0e3, 1.0e3);
+            let px = lcg_range(&mut seed, -1.0e3, 1.0e3);
+            let py = lcg_range(&mut seed, -1.0e3, 1.0e3);
+            let a = Coord::new(ax, ay);
+            let v = Coord::new(vx, vy);
+            let p = Coord::new(px, py);
+            if classify_orient2d_vec(&a, &v, &p) == Some(stage) {
+                return Some((a, v, p));
+            }
+            continue;
+        }
+
+        // For Dd and Exact stages, construct near-collinear cases
+        let vx = lcg_range(&mut seed, -1.0e3, 1.0e3);
+        let vy = lcg_range(&mut seed, -1.0e3, 1.0e3);
+        if vx.abs() + vy.abs() < 1.0e-12 {
+            continue;
+        }
+        let t = lcg_range(&mut seed, -1.0e3, 1.0e3);
+        for &eps in &EPS_LIST {
+            // Point nearly on the line: p = a + t*v + eps*perpendicular
+            let a = Coord::new(0.0, 0.0);
+            let v = Coord::new(vx, vy);
+            let p = Coord::new(t * vx - eps * vy, t * vy + eps * vx);
+            if classify_orient2d_vec(&a, &v, &p) == Some(stage) {
+                return Some((a, v, p));
+            }
+        }
+    }
+    None
+}
+
+fn property_apfp_signum_orient2d_vec_stage(seed: u64, stage: Stage) -> TestResult {
+    let Some((a, v, p)) = find_orient2d_vec_case(seed, stage) else {
+        return TestResult::discard();
+    };
+    if classify_orient2d_vec(&a, &v, &p) != Some(stage) {
+        return TestResult::discard();
+    }
+
+    let ours = orient2d_vec(&a, &v, &p);
+    let Some(rational) = orient2d_vec_rational(&a, &v, &p) else {
+        return TestResult::discard();
+    };
+
+    TestResult::from_bool(ours == rational)
+}
+
+#[test]
+#[timeout(8000)]
+fn quickcheck_apfp_signum_orient2d_vec_fast() {
+    run_qc_seed(|seed| property_apfp_signum_orient2d_vec_stage(seed, Stage::Fast));
+}
+
+#[test]
+#[timeout(8000)]
+fn quickcheck_apfp_signum_orient2d_vec_dd() {
+    run_qc_seed(|seed| property_apfp_signum_orient2d_vec_stage(seed, Stage::Dd));
+}
+
+#[test]
+#[timeout(12000)]
+fn quickcheck_apfp_signum_orient2d_vec_exact() {
+    run_qc_seed(|seed| property_apfp_signum_orient2d_vec_stage(seed, Stage::Exact));
 }

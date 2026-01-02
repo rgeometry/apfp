@@ -39,6 +39,31 @@ pub fn cmp_dist(origin: &Coord, p: &Coord, q: &Coord) -> Ordering {
     }
 }
 
+/// Compute orientation of point `p` relative to a line through `a` in direction `v`.
+///
+/// This is equivalent to `orient2d(a, a + v, p)` but avoids precision loss
+/// that would occur from computing `a + v` in floating-point arithmetic.
+///
+/// Returns Positive if p is to the left of the directed line (counter-clockwise),
+/// Negative if to the right (clockwise), Zero if collinear.
+///
+/// # Mathematical derivation
+/// Given `orient2d(a, b, c) = (a.x - c.x) * (b.y - c.y) - (a.y - c.y) * (b.x - c.x)`,
+/// substituting `b = a + v` yields:
+/// ```text
+/// (a.x - p.x) * (a.y + v.y - p.y) - (a.y - p.y) * (a.x + v.x - p.x)
+/// = (a.x - p.x) * v.y - (a.y - p.y) * v.x
+/// ```
+pub fn orient2d_vec(a: &Coord, v: &Coord, p: &Coord) -> GeometryPredicateResult {
+    let sign = apfp_signum!((a.x - p.x) * v.y - (a.y - p.y) * v.x);
+    match sign {
+        1 => GeometryPredicateResult::Positive,
+        -1 => GeometryPredicateResult::Negative,
+        0 => GeometryPredicateResult::Zero,
+        _ => unreachable!(),
+    }
+}
+
 /// Compute whether point d lies inside the circumcircle of triangle abc.
 /// Returns Positive if inside, Negative if outside, Zero if on the circle.
 #[inline]

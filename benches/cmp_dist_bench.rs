@@ -9,7 +9,7 @@
 use apfp::analysis::adaptive_signum::{
     dd_add, dd_from, dd_signum, dd_square, dd_sub, gamma_from_ops,
 };
-use apfp::{Coord, cmp_dist};
+use apfp::geometry::f64::{Coord, cmp_dist};
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use num_rational::BigRational;
 use num_traits::Signed;

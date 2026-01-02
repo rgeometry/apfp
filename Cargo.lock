@@ -30,6 +30,7 @@ dependencies = [
  "criterion",
  "geometry-predicates",
  "ntest",
+ "num-bigint",
  "num-rational",
  "num-traits",
  "quickcheck",

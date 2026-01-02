@@ -1,7 +1,8 @@
 use apfp::analysis::adaptive_signum::{
     Dd, dd_add, dd_from, dd_mul, dd_signum, dd_sub, gamma_from_ops,
 };
-use apfp::{Coord, apfp_signum, orient2d_normal, orient2d_vec};
+use apfp::apfp_signum;
+use apfp::geometry::f64::{Coord, orient2d_normal, orient2d_vec};
 use criterion::{Criterion, criterion_group, criterion_main};
 use num_rational::BigRational;
 use num_traits::Zero;

@@ -8,7 +8,7 @@
 //! - Rational (exact but slow baseline)
 
 use apfp::analysis::adaptive_signum::{dd_from, dd_mul, dd_signum, dd_sub, gamma_from_ops};
-use apfp::{Coord, orient2d};
+use apfp::geometry::f64::{Coord, orient2d};
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use geometry_predicates::orient2d as gp_orient2d;
 use num_rational::BigRational;

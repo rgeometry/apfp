@@ -3,7 +3,7 @@ use apfp::analysis::adaptive_signum::{
     signum_exact,
 };
 use apfp::apfp_signum;
-use apfp::{Coord, GeometryPredicateResult, incircle, orient2d, orient2d_vec};
+use apfp::{Coord, GeometryPredicateResult, incircle, orient2d, orient2d_normal, orient2d_vec};
 use geometry_predicates::orient2d as gp_orient2d;
 use ntest::timeout;
 use num_rational::BigRational;
@@ -753,4 +753,210 @@ fn quickcheck_apfp_signum_orient2d_vec_dd() {
 #[timeout(12000)]
 fn quickcheck_apfp_signum_orient2d_vec_exact() {
     run_qc_seed(|seed| property_apfp_signum_orient2d_vec_stage(seed, Stage::Exact));
+}
+
+// ============================================================================
+// orient2d_normal tests
+// ============================================================================
+
+fn orient2d_normal_rational(a: &Coord, n: &Coord, p: &Coord) -> Option<GeometryPredicateResult> {
+    let ax = to_rational(a.x)?;
+    let ay = to_rational(a.y)?;
+    let nx = to_rational(n.x)?;
+    let ny = to_rational(n.y)?;
+    let px = to_rational(p.x)?;
+    let py = to_rational(p.y)?;
+
+    // orient2d_normal(a, n, p) = (a.x - p.x) * n.x + (a.y - p.y) * n.y
+    let det = (&ax - &px) * &nx + (&ay - &py) * &ny;
+    Some(result_from_rational(det))
+}
+
+#[test]
+fn orient2d_normal_basic_positive() {
+    // Line through origin with normal pointing in +y direction (horizontal line)
+    // Point above the line should be positive
+    let a = Coord::new(0.0, 0.0);
+    let n = Coord::new(0.0, 1.0);
+    let p = Coord::new(0.0, -1.0); // Below origin, so (a-p) points up, dot with n is positive
+    assert_eq!(
+        orient2d_normal(&a, &n, &p),
+        GeometryPredicateResult::Positive
+    );
+}
+
+#[test]
+fn orient2d_normal_basic_negative() {
+    // Line through origin with normal pointing in +y direction (horizontal line)
+    // Point below the line (in normal direction) should be negative
+    let a = Coord::new(0.0, 0.0);
+    let n = Coord::new(0.0, 1.0);
+    let p = Coord::new(0.0, 1.0); // Above origin, so (a-p) points down, dot with n is negative
+    assert_eq!(
+        orient2d_normal(&a, &n, &p),
+        GeometryPredicateResult::Negative
+    );
+}
+
+#[test]
+fn orient2d_normal_on_line() {
+    // Line through origin with normal pointing in +y direction (horizontal line)
+    // Point on the line should be zero
+    let a = Coord::new(0.0, 0.0);
+    let n = Coord::new(0.0, 1.0);
+    let p = Coord::new(5.0, 0.0); // On the x-axis
+    assert_eq!(orient2d_normal(&a, &n, &p), GeometryPredicateResult::Zero);
+}
+
+#[test]
+fn orient2d_normal_matches_orient2d_vec() {
+    // orient2d_normal(a, n, p) should equal orient2d_vec(a, (-n.y, n.x), p)
+    let a = Coord::new(1.0, 2.0);
+    let n = Coord::new(3.0, 4.0);
+    let p = Coord::new(5.0, 6.0);
+    let v = Coord::new(-n.y, n.x); // Perpendicular to normal
+    assert_eq!(orient2d_normal(&a, &n, &p), orient2d_vec(&a, &v, &p));
+}
+
+fn property_orient2d_normal_consistency(
+    ax: f64,
+    ay: f64,
+    nx: f64,
+    ny: f64,
+    px: f64,
+    py: f64,
+) -> TestResult {
+    if !within_limits(&[ax, ay, nx, ny, px, py]) {
+        return TestResult::discard();
+    }
+
+    let a = Coord::new(ax, ay);
+    let n = Coord::new(nx, ny);
+    let p = Coord::new(px, py);
+
+    let ours = orient2d_normal(&a, &n, &p);
+
+    let Some(rational_result) = orient2d_normal_rational(&a, &n, &p) else {
+        return TestResult::discard();
+    };
+
+    TestResult::from_bool(ours == rational_result)
+}
+
+#[test]
+#[timeout(5000)]
+fn quickcheck_orient2d_normal_consistency() {
+    run_qc(property_orient2d_normal_consistency);
+}
+
+fn dd_orient2d_normal(ax: f64, ay: f64, nx: f64, ny: f64, px: f64, py: f64) -> Dd {
+    // (a.x - p.x) * n.x + (a.y - p.y) * n.y
+    let dx = dd_sub(dd_from(ax), dd_from(px));
+    let dy = dd_sub(dd_from(ay), dd_from(py));
+    let prod1 = dd_mul(dx, dd_from(nx));
+    let prod2 = dd_mul(dy, dd_from(ny));
+    dd_add(prod1, prod2)
+}
+
+fn classify_orient2d_normal(a: &Coord, n: &Coord, p: &Coord) -> Option<Stage> {
+    let ax = a.x;
+    let ay = a.y;
+    let nx = n.x;
+    let ny = n.y;
+    let px = p.x;
+    let py = p.y;
+    if !within_limits(&[ax, ay, nx, ny, px, py]) {
+        return None;
+    }
+
+    let dx = ax - px;
+    let dy = ay - py;
+    let prod1 = dx * nx;
+    let prod2 = dy * ny;
+    let det = prod1 + prod2;
+    let detsum = prod1.abs() + prod2.abs();
+    let errbound = gamma_for_ops(5) * detsum; // 5 ops: 2 subs, 2 muls, 1 add
+
+    if det.abs() > errbound {
+        return Some(Stage::Fast);
+    }
+    let dd_value = dd_orient2d_normal(ax, ay, nx, ny, px, py);
+    if dd_signum(dd_value).is_some() {
+        Some(Stage::Dd)
+    } else {
+        Some(Stage::Exact)
+    }
+}
+
+fn find_orient2d_normal_case(mut seed: u64, stage: Stage) -> Option<(Coord, Coord, Coord)> {
+    for _ in 0..200 {
+        if stage == Stage::Fast {
+            let ax = lcg_range(&mut seed, -1.0e3, 1.0e3);
+            let ay = lcg_range(&mut seed, -1.0e3, 1.0e3);
+            let nx = lcg_range(&mut seed, -1.0e3, 1.0e3);
+            let ny = lcg_range(&mut seed, -1.0e3, 1.0e3);
+            let px = lcg_range(&mut seed, -1.0e3, 1.0e3);
+            let py = lcg_range(&mut seed, -1.0e3, 1.0e3);
+            let a = Coord::new(ax, ay);
+            let n = Coord::new(nx, ny);
+            let p = Coord::new(px, py);
+            if classify_orient2d_normal(&a, &n, &p) == Some(stage) {
+                return Some((a, n, p));
+            }
+            continue;
+        }
+
+        // For Dd and Exact stages, construct near-on-line cases
+        // Normal n, direction v = (-n.y, n.x), point nearly on line: p = a + t*v + eps*n
+        let nx = lcg_range(&mut seed, -1.0e3, 1.0e3);
+        let ny = lcg_range(&mut seed, -1.0e3, 1.0e3);
+        if nx.abs() + ny.abs() < 1.0e-12 {
+            continue;
+        }
+        let t = lcg_range(&mut seed, -1.0e3, 1.0e3);
+        for &eps in &EPS_LIST {
+            let a = Coord::new(0.0, 0.0);
+            let n = Coord::new(nx, ny);
+            // p = t * (-n.y, n.x) + eps * (n.x, n.y) = (-t*n.y + eps*n.x, t*n.x + eps*n.y)
+            let p = Coord::new(-t * ny + eps * nx, t * nx + eps * ny);
+            if classify_orient2d_normal(&a, &n, &p) == Some(stage) {
+                return Some((a, n, p));
+            }
+        }
+    }
+    None
+}
+
+fn property_apfp_signum_orient2d_normal_stage(seed: u64, stage: Stage) -> TestResult {
+    let Some((a, n, p)) = find_orient2d_normal_case(seed, stage) else {
+        return TestResult::discard();
+    };
+    if classify_orient2d_normal(&a, &n, &p) != Some(stage) {
+        return TestResult::discard();
+    }
+
+    let ours = orient2d_normal(&a, &n, &p);
+    let Some(rational) = orient2d_normal_rational(&a, &n, &p) else {
+        return TestResult::discard();
+    };
+
+    TestResult::from_bool(ours == rational)
+}
+
+#[test]
+#[timeout(8000)]
+fn quickcheck_apfp_signum_orient2d_normal_fast() {
+    run_qc_seed(|seed| property_apfp_signum_orient2d_normal_stage(seed, Stage::Fast));
+}
+
+#[test]
+#[timeout(8000)]
+fn quickcheck_apfp_signum_orient2d_normal_dd() {
+    run_qc_seed(|seed| property_apfp_signum_orient2d_normal_stage(seed, Stage::Dd));
+}
+
+#[test]
+#[timeout(12000)]
+fn quickcheck_apfp_signum_orient2d_normal_exact() {
+    run_qc_seed(|seed| property_apfp_signum_orient2d_normal_stage(seed, Stage::Exact));
 }

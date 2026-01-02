@@ -64,6 +64,35 @@ pub fn orient2d_vec(a: &Coord, v: &Coord, p: &Coord) -> GeometryPredicateResult 
     }
 }
 
+/// Compute orientation of point `p` relative to a line through `a` with normal `n`.
+///
+/// The line is defined by a point `a` and a normal vector `n` (perpendicular to the line).
+/// This is equivalent to `orient2d_vec(a, (-n.y, n.x), p)` but expressed directly in
+/// terms of the normal vector.
+///
+/// Returns Positive if p is on the side the normal points to,
+/// Negative if on the opposite side, Zero if on the line.
+///
+/// # Mathematical derivation
+/// If `n = (nx, ny)` is the normal, then the direction vector is `v = (-ny, nx)`.
+/// Substituting into `orient2d_vec`:
+/// ```text
+/// (a.x - p.x) * v.y - (a.y - p.y) * v.x
+/// = (a.x - p.x) * n.x - (a.y - p.y) * (-n.y)
+/// = (a.x - p.x) * n.x + (a.y - p.y) * n.y
+/// ```
+/// This is the dot product of `(a - p)` with `n`.
+#[inline]
+pub fn orient2d_normal(a: &Coord, n: &Coord, p: &Coord) -> GeometryPredicateResult {
+    let sign = apfp_signum!((a.x - p.x) * n.x + (a.y - p.y) * n.y);
+    match sign {
+        1 => GeometryPredicateResult::Positive,
+        -1 => GeometryPredicateResult::Negative,
+        0 => GeometryPredicateResult::Zero,
+        _ => unreachable!(),
+    }
+}
+
 /// Compute whether point d lies inside the circumcircle of triangle abc.
 /// Returns Positive if inside, Negative if outside, Zero if on the circle.
 #[inline]

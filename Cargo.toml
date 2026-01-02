@@ -28,6 +28,7 @@ criterion = "0.7.0"
 geometry-predicates = "0.3"
 num-rational = "0.4"
 num-traits = "0.2"
+num-bigint = "0.4"
 
 [[bench]]
 name = "orient2d_bench"
@@ -39,4 +40,8 @@ harness = false
 
 [[bench]]
 name = "orient2d_vec_bench"
+harness = false
+
+[[bench]]
+name = "orient2d_int_bench"
 harness = false

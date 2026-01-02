@@ -10,7 +10,7 @@ keywords = [
   "predicates",
   "floating-point",
   "robust",
-  "computational-geometry",
+  "adaptive-precision",
 ]
 categories = ["mathematics", "science", "algorithms"]
 readme = "README.md"

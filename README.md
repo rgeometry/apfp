@@ -19,7 +19,7 @@ apfp = "0.1"
 ### Using Pre-built Predicates
 
 ```rust
-use apfp::{orient2d, cmp_dist, incircle, Coord, GeometryPredicateResult};
+use apfp::geometry::f64::{Coord, orient2d, cmp_dist, Orientation};
 use std::cmp::Ordering;
 
 let a = Coord::new(0.0, 0.0);
@@ -28,9 +28,9 @@ let c = Coord::new(0.5, 1e-16);
 
 // Orientation test: is c left of, right of, or on line ab?
 match orient2d(&a, &b, &c) {
-    GeometryPredicateResult::Positive => println!("Counter-clockwise"),
-    GeometryPredicateResult::Negative => println!("Clockwise"),
-    GeometryPredicateResult::Zero => println!("Collinear"),
+    Orientation::CounterClockwise => println!("Counter-clockwise"),
+    Orientation::Clockwise => println!("Clockwise"),
+    Orientation::CoLinear => println!("Collinear"),
 }
 
 // Distance comparison: is p closer to origin than q?
@@ -90,4 +90,4 @@ On random inputs, `orient2d` performs within 1.1x of the `geometry-predicates` c
 
 ## License
 
-See `Cargo.toml` for license information.
+This project is released under [The Unlicense](LICENSE).

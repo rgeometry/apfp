@@ -3,7 +3,7 @@ name = "apfp"
 version = "0.1.0"
 edition = "2024"
 description = "Adaptive precision floating-point arithmetic for robust geometric predicates"
-license = "MIT OR Apache-2.0"
+license = "Unlicense"
 repository = "https://github.com/lemmih/apfp"
 keywords = [
   "geometry",

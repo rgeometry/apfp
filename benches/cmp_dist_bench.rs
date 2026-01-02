@@ -156,7 +156,11 @@ fn find_stage_cases() -> (StageCases, StageCases, StageCases) {
     while dd_cases.len() < 100 {
         if dd_cases.is_empty() {
             // Hardcoded fallback
-            dd_cases.push((origin, Coord::new(100.0, 0.0), Coord::new(100.0 + 1e-13, 0.0)));
+            dd_cases.push((
+                origin,
+                Coord::new(100.0, 0.0),
+                Coord::new(100.0 + 1e-13, 0.0),
+            ));
         } else {
             dd_cases.push(dd_cases[0]);
         }

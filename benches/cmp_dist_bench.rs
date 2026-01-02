@@ -19,6 +19,9 @@ use std::hint::black_box;
 const LCG_A: u64 = 6364136223846793005;
 const LCG_C: u64 = 1;
 
+/// Type alias for benchmark test cases: (origin, p, q) coordinate triples.
+type StageCases = Vec<(Coord, Coord, Coord)>;
+
 /// Simple f64 distance comparison - no error checking, may give wrong results.
 fn cmp_dist_naive(origin: &Coord, p: &Coord, q: &Coord) -> Ordering {
     let pdx = p.x - origin.x;
@@ -97,11 +100,7 @@ fn classify_cmp_dist(origin: &Coord, p: &Coord, q: &Coord) -> Stage {
 }
 
 /// Find cases for each stage by searching.
-fn find_stage_cases() -> (
-    Vec<(Coord, Coord, Coord)>,
-    Vec<(Coord, Coord, Coord)>,
-    Vec<(Coord, Coord, Coord)>,
-) {
+fn find_stage_cases() -> (StageCases, StageCases, StageCases) {
     let mut fast_cases = Vec::new();
     let mut dd_cases = Vec::new();
     let mut exact_cases = Vec::new();

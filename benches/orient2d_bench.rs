@@ -18,6 +18,9 @@ use std::hint::black_box;
 const LCG_A: u64 = 6364136223846793005;
 const LCG_C: u64 = 1;
 
+/// Type alias for benchmark test cases: (a, b, c) coordinate triples.
+type StageCases = Vec<(Coord, Coord, Coord)>;
+
 /// Simple f64 orient2d - no error checking, may give wrong results for near-collinear points.
 fn orient2d_naive(a: &Coord, b: &Coord, c: &Coord) -> i8 {
     let det = (a.x - c.x) * (b.y - c.y) - (a.y - c.y) * (b.x - c.x);
@@ -122,11 +125,7 @@ fn shewchuk_needs_adapt(a: &Coord, b: &Coord, c: &Coord) -> bool {
 /// - fast_cases: resolved by fast filter in both implementations
 /// - dd_cases: need DD/B-stage in apfp, trigger adapt in Shewchuk
 /// - exact_cases: need exact arithmetic in apfp, trigger adapt in Shewchuk
-fn find_stage_cases() -> (
-    Vec<(Coord, Coord, Coord)>,
-    Vec<(Coord, Coord, Coord)>,
-    Vec<(Coord, Coord, Coord)>,
-) {
+fn find_stage_cases() -> (StageCases, StageCases, StageCases) {
     let mut fast_cases = Vec::new();
     let mut dd_cases = Vec::new();
     let mut exact_cases = Vec::new();

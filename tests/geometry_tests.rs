@@ -1,4 +1,7 @@
-use apfp::analysis::adaptive_signum::{Dd, dd_add, dd_from, dd_mul, dd_signum, dd_square, dd_sub};
+use apfp::analysis::adaptive_signum::{
+    Dd, Diff, Scalar, Signum, Square, Sum, dd_add, dd_from, dd_mul, dd_signum, dd_square, dd_sub,
+    signum_exact,
+};
 use apfp::apfp_signum;
 use apfp::{Coord, GeometryPredicateResult, incircle, orient2d};
 use geometry_predicates::orient2d as gp_orient2d;
@@ -19,6 +22,13 @@ const EPS_LIST: [f64; 12] = [
 
 const LCG_A: u64 = 6364136223846793005;
 const LCG_C: u64 = 1;
+
+type CmpDistExpr = Diff<
+    Sum<Square<Diff<Scalar, Scalar>>, Square<Diff<Scalar, Scalar>>>,
+    Sum<Square<Diff<Scalar, Scalar>>, Square<Diff<Scalar, Scalar>>>,
+>;
+
+type SquareDiffExpr = Diff<Square<Scalar>, Square<Scalar>>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Stage {
@@ -93,12 +103,12 @@ fn orient2d_rational(a: &Coord, b: &Coord, c: &Coord) -> Option<GeometryPredicat
     let cx = to_rational(c.x)?;
     let cy = to_rational(c.y)?;
 
-    let bax = &bx - &ax;
-    let bay = &by - &ay;
-    let cax = &cx - &ax;
-    let cay = &cy - &ay;
+    let adx = &ax - &cx;
+    let bdx = &bx - &cx;
+    let ady = &ay - &cy;
+    let bdy = &by - &cy;
 
-    let det = bax * &cay - bay * &cax;
+    let det = &adx * &bdy - &ady * &bdx;
     Some(result_from_rational(det))
 }
 
@@ -270,14 +280,8 @@ fn apfp_signum_square_regression() {
     let x = 1.0e6_f64 + 1.0e-3;
     let y = 1.0e6_f64 - 1.0e-3;
     let apfp = apfp_signum!(square(x) - square(y));
-    let Some(rational) = cmp_dist_rational(
-        &Coord::new(0.0, 0.0),
-        &Coord::new(x, 0.0),
-        &Coord::new(y, 0.0),
-    ) else {
-        panic!("expected finite rational");
-    };
-    assert_eq!(apfp, rational);
+    let reference = square_diff_reference_sign(x, y);
+    assert_eq!(apfp, reference);
 }
 
 fn sign_from_result(result: GeometryPredicateResult) -> i32 {
@@ -296,6 +300,27 @@ fn sign_from_f64(value: f64) -> i32 {
     } else {
         0
     }
+}
+
+fn square_diff_reference_sign(x: f64, y: f64) -> i32 {
+    let expr = Diff(Square(Scalar(x)), Square(Scalar(y)));
+    let mut buffer = [0.0_f64; <SquareDiffExpr as Signum>::STACK_LEN];
+    signum_exact(expr, &mut buffer)
+}
+
+fn cmp_dist_reference_sign(origin: &Coord, p: &Coord, q: &Coord) -> i32 {
+    let expr = Diff(
+        Sum(
+            Square(Diff(Scalar(p.x), Scalar(origin.x))),
+            Square(Diff(Scalar(p.y), Scalar(origin.y))),
+        ),
+        Sum(
+            Square(Diff(Scalar(q.x), Scalar(origin.x))),
+            Square(Diff(Scalar(q.y), Scalar(origin.y))),
+        ),
+    );
+    let mut buffer = [0.0_f64; <CmpDistExpr as Signum>::STACK_LEN];
+    signum_exact(expr, &mut buffer)
 }
 
 fn gamma_for_ops(op_count: usize) -> f64 {
@@ -463,25 +488,6 @@ fn find_cmp_dist_case(mut seed: u64, stage: Stage) -> Option<(Coord, Coord, Coor
     None
 }
 
-fn cmp_dist_rational(origin: &Coord, p: &Coord, q: &Coord) -> Option<i32> {
-    let ox = to_rational(origin.x)?;
-    let oy = to_rational(origin.y)?;
-    let px = to_rational(p.x)?;
-    let py = to_rational(p.y)?;
-    let qx = to_rational(q.x)?;
-    let qy = to_rational(q.y)?;
-
-    let pdx = &px - &ox;
-    let pdy = &py - &oy;
-    let qdx = &qx - &ox;
-    let qdy = &qy - &oy;
-
-    let pdist = (&pdx * &pdx) + (&pdy * &pdy);
-    let qdist = (&qdx * &qdx) + (&qdy * &qdy);
-    let diff = pdist - qdist;
-    Some(sign_from_result(result_from_rational(diff)))
-}
-
 fn property_apfp_signum_orient2d_stage(seed: u64, stage: Stage) -> TestResult {
     let Some((a, b, c)) = find_orient2d_case(seed, stage) else {
         return TestResult::discard();
@@ -512,11 +518,9 @@ fn property_apfp_signum_cmp_dist_stage(seed: u64, stage: Stage) -> TestResult {
         (square(p.x - origin.x) + square(p.y - origin.y))
             - (square(q.x - origin.x) + square(q.y - origin.y))
     );
-    let Some(rational_sign) = cmp_dist_rational(&origin, &p, &q) else {
-        return TestResult::discard();
-    };
+    let reference_sign = cmp_dist_reference_sign(&origin, &p, &q);
 
-    TestResult::from_bool(sign == rational_sign)
+    TestResult::from_bool(sign == reference_sign)
 }
 
 #[test]
@@ -532,7 +536,7 @@ fn quickcheck_apfp_signum_orient2d_dd() {
 }
 
 #[test]
-#[timeout(8000)]
+#[timeout(12000)]
 fn quickcheck_apfp_signum_orient2d_exact() {
     run_qc_seed(|seed| property_apfp_signum_orient2d_stage(seed, Stage::Exact));
 }

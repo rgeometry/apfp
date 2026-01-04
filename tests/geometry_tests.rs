@@ -986,6 +986,63 @@ fn orient2d_bigint_i8(ax: i8, ay: i8, bx: i8, by: i8, cx: i8, cy: i8) -> i32 {
     sign_to_i32(det.sign())
 }
 
+fn cmp_dist_bigint_i8(ox: i8, oy: i8, px: i8, py: i8, qx: i8, qy: i8) -> i32 {
+    let ox = NumBigInt::from(ox);
+    let oy = NumBigInt::from(oy);
+    let px = NumBigInt::from(px);
+    let py = NumBigInt::from(py);
+    let qx = NumBigInt::from(qx);
+    let qy = NumBigInt::from(qy);
+
+    let pdx = &px - &ox;
+    let pdy = &py - &oy;
+    let qdx = &qx - &ox;
+    let qdy = &qy - &oy;
+
+    let pd2 = &pdx * &pdx + &pdy * &pdy;
+    let qd2 = &qdx * &qdx + &qdy * &qdy;
+
+    sign_to_i32((&pd2 - &qd2).sign())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn incircle_bigint_i8(
+    ax: i8,
+    ay: i8,
+    bx: i8,
+    by: i8,
+    cx: i8,
+    cy: i8,
+    dx: i8,
+    dy: i8,
+) -> i32 {
+    let ax = NumBigInt::from(ax);
+    let ay = NumBigInt::from(ay);
+    let bx = NumBigInt::from(bx);
+    let by = NumBigInt::from(by);
+    let cx = NumBigInt::from(cx);
+    let cy = NumBigInt::from(cy);
+    let dx = NumBigInt::from(dx);
+    let dy = NumBigInt::from(dy);
+
+    let adx = &ax - &dx;
+    let ady = &ay - &dy;
+    let bdx = &bx - &dx;
+    let bdy = &by - &dy;
+    let cdx = &cx - &dx;
+    let cdy = &cy - &dy;
+
+    let ad2 = &adx * &adx + &ady * &ady;
+    let bd2 = &bdx * &bdx + &bdy * &bdy;
+    let cd2 = &cdx * &cdx + &cdy * &cdy;
+
+    let det = &adx * (&bdy * &cd2 - &cdy * &bd2)
+        + &ady * (&cdx * &bd2 - &bdx * &cd2)
+        + &ad2 * (&bdx * &cdy - &cdx * &bdy);
+
+    sign_to_i32(det.sign())
+}
+
 fn orient2d_bigint_i32(ax: i32, ay: i32, bx: i32, by: i32, cx: i32, cy: i32) -> i32 {
     let ax = NumBigInt::from(ax);
     let ay = NumBigInt::from(ay);
@@ -1205,6 +1262,85 @@ fn quickcheck_int_orient2d_i8() {
         .tests(QC_STAGE_TESTS)
         .max_tests(QC_MAX_TESTS)
         .quickcheck(property_int_orient2d_i8_consistency_bounded as fn(u64) -> TestResult);
+}
+
+fn property_int_cmp_dist_i8_consistency_bounded(seed: u64) -> TestResult {
+    let mut state = seed;
+
+    fn lcg_i8(state: &mut u64) -> i8 {
+        *state = state.wrapping_mul(LCG_A).wrapping_add(LCG_C);
+        (*state >> 56) as i8
+    }
+
+    let ox = lcg_i8(&mut state);
+    let oy = lcg_i8(&mut state);
+    let px = lcg_i8(&mut state);
+    let py = lcg_i8(&mut state);
+    let qx = lcg_i8(&mut state);
+    let qy = lcg_i8(&mut state);
+
+    let origin = i8_types::Coord::new(ox, oy);
+    let p = i8_types::Coord::new(px, py);
+    let q = i8_types::Coord::new(qx, qy);
+
+    let ours = match i8_types::cmp_dist(&origin, &p, &q) {
+        core::cmp::Ordering::Greater => 1,
+        core::cmp::Ordering::Less => -1,
+        core::cmp::Ordering::Equal => 0,
+    };
+    let expected = cmp_dist_bigint_i8(ox, oy, px, py, qx, qy);
+
+    TestResult::from_bool(ours == expected)
+}
+
+#[test]
+#[timeout(120000)]
+fn quickcheck_int_cmp_dist_i8() {
+    QuickCheck::new()
+        .tests(QC_STAGE_TESTS)
+        .max_tests(QC_MAX_TESTS)
+        .quickcheck(property_int_cmp_dist_i8_consistency_bounded as fn(u64) -> TestResult);
+}
+
+fn property_int_incircle_i8_consistency_bounded(seed: u64) -> TestResult {
+    let mut state = seed;
+
+    fn lcg_i8(state: &mut u64) -> i8 {
+        *state = state.wrapping_mul(LCG_A).wrapping_add(LCG_C);
+        (*state >> 56) as i8
+    }
+
+    let ax = lcg_i8(&mut state);
+    let ay = lcg_i8(&mut state);
+    let bx = lcg_i8(&mut state);
+    let by = lcg_i8(&mut state);
+    let cx = lcg_i8(&mut state);
+    let cy = lcg_i8(&mut state);
+    let dx = lcg_i8(&mut state);
+    let dy = lcg_i8(&mut state);
+
+    let a = i8_types::Coord::new(ax, ay);
+    let b = i8_types::Coord::new(bx, by);
+    let c = i8_types::Coord::new(cx, cy);
+    let d = i8_types::Coord::new(dx, dy);
+
+    let ours = match i8_types::incircle(&a, &b, &c, &d) {
+        Orientation::CounterClockwise => 1,
+        Orientation::Clockwise => -1,
+        Orientation::CoLinear => 0,
+    };
+    let expected = incircle_bigint_i8(ax, ay, bx, by, cx, cy, dx, dy);
+
+    TestResult::from_bool(ours == expected)
+}
+
+#[test]
+#[timeout(120000)]
+fn quickcheck_int_incircle_i8() {
+    QuickCheck::new()
+        .tests(QC_STAGE_TESTS)
+        .max_tests(QC_MAX_TESTS)
+        .quickcheck(property_int_incircle_i8_consistency_bounded as fn(u64) -> TestResult);
 }
 
 fn property_int_orient2d_i32_consistency_bounded(seed: u64) -> TestResult {

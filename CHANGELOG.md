@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Fix `int_signum!` macro incorrectly handling minimum signed integer values (e.g., `i8::MIN`, `i16::MIN`, etc.) ([#24](https://github.com/rgeometry/apfp/pull/24))
+
 ## [0.1.0] - 2026-01-02
 
 Initial release of apfp - Adaptive Precision Floating-Point arithmetic for robust geometric predicates.

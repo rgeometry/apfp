@@ -1,6 +1,6 @@
 [package]
 name = "apfp"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Adaptive precision floating-point arithmetic for robust geometric predicates"
 license = "Unlicense"

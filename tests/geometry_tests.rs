@@ -1006,16 +1006,7 @@ fn cmp_dist_bigint_i8(ox: i8, oy: i8, px: i8, py: i8, qx: i8, qy: i8) -> i32 {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn incircle_bigint_i8(
-    ax: i8,
-    ay: i8,
-    bx: i8,
-    by: i8,
-    cx: i8,
-    cy: i8,
-    dx: i8,
-    dy: i8,
-) -> i32 {
+fn incircle_bigint_i8(ax: i8, ay: i8, bx: i8, by: i8, cx: i8, cy: i8, dx: i8, dy: i8) -> i32 {
     let ax = NumBigInt::from(ax);
     let ay = NumBigInt::from(ay);
     let bx = NumBigInt::from(bx);

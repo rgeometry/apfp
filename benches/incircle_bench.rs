@@ -6,8 +6,8 @@
 //! - robust crate (Shewchuk reference)
 //! - Rational (exact but slow baseline)
 
-use apfp::geometry::f64::{Coord, incircle};
 use apfp::geometry::Orientation;
+use apfp::geometry::f64::{Coord, incircle};
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use num_rational::BigRational;
 use num_traits::Zero;
@@ -32,7 +32,8 @@ fn incircle_naive(a: &Coord, b: &Coord, c: &Coord, d: &Coord) -> i8 {
     let bd2 = bdx * bdx + bdy * bdy;
     let cd2 = cdx * cdx + cdy * cdy;
 
-    let det = adx * (bdy * cd2 - cdy * bd2) + ady * (cdx * bd2 - bdx * cd2)
+    let det = adx * (bdy * cd2 - cdy * bd2)
+        + ady * (cdx * bd2 - bdx * cd2)
         + ad2 * (bdx * cdy - cdx * bdy);
 
     if det > 0.0 {

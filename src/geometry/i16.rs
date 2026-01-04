@@ -103,17 +103,15 @@ pub fn cmp_dist(origin: &Coord, p: &Coord, q: &Coord) -> Ordering {
 /// the results are reversed.
 #[inline]
 pub fn incircle(a: &Coord, b: &Coord, c: &Coord, d: &Coord) -> Orientation {
-    let adx = a.x - d.x;
-    let ady = a.y - d.y;
-    let bdx = b.x - d.x;
-    let bdy = b.y - d.y;
-    let cdx = c.x - d.x;
-    let cdy = c.y - d.y;
-
     let sign = int_signum!(
-        adx * (bdy * (square(cdx) + square(cdy)) - cdy * (square(bdx) + square(bdy)))
-            + ady * (cdx * (square(bdx) + square(bdy)) - bdx * (square(cdx) + square(cdy)))
-            + (square(adx) + square(ady)) * (bdx * cdy - cdx * bdy)
+        (a.x - d.x)
+            * ((b.y - d.y) * (square(c.x - d.x) + square(c.y - d.y))
+                - (c.y - d.y) * (square(b.x - d.x) + square(b.y - d.y)))
+            + (a.y - d.y)
+                * ((c.x - d.x) * (square(b.x - d.x) + square(b.y - d.y))
+                    - (b.x - d.x) * (square(c.x - d.x) + square(c.y - d.y)))
+            + (square(a.x - d.x) + square(a.y - d.y))
+                * ((b.x - d.x) * (c.y - d.y) - (c.x - d.x) * (b.y - d.y))
     );
 
     match sign {

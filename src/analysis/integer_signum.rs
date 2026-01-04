@@ -115,11 +115,7 @@ macro_rules! impl_to_bigint_signed {
             #[inline(always)]
             fn to_bigint_1(&self) -> BigInt<1> {
                 let negative = *self < 0;
-                let abs = if negative {
-                    (self.wrapping_neg()) as u64
-                } else {
-                    *self as u64
-                };
+                let abs = self.unsigned_abs() as u64;
                 BigInt {
                     limbs: [abs],
                     negative,
@@ -129,11 +125,7 @@ macro_rules! impl_to_bigint_signed {
             #[inline(always)]
             fn to_bigint_2(&self) -> BigInt<2> {
                 let negative = *self < 0;
-                let abs = if negative {
-                    (self.wrapping_neg()) as u64
-                } else {
-                    *self as u64
-                };
+                let abs = self.unsigned_abs() as u64;
                 BigInt {
                     limbs: [abs, 0],
                     negative,
@@ -143,11 +135,7 @@ macro_rules! impl_to_bigint_signed {
             #[inline(always)]
             fn to_bigint_4(&self) -> BigInt<4> {
                 let negative = *self < 0;
-                let abs = if negative {
-                    (self.wrapping_neg()) as u64
-                } else {
-                    *self as u64
-                };
+                let abs = self.unsigned_abs() as u64;
                 BigInt {
                     limbs: [abs, 0, 0, 0],
                     negative,

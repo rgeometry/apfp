@@ -45,3 +45,7 @@ harness = false
 [[bench]]
 name = "orient2d_int_bench"
 harness = false
+
+[[bench]]
+name = "incircle_bench"
+harness = false

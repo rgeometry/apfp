@@ -12,9 +12,9 @@ use num_traits::{Signed, Zero};
 use quickcheck::{QuickCheck, TestResult};
 
 const MAG_LIMIT: f64 = 1.0e6;
-const QC_TESTS: u64 = 300;
-const QC_MAX_TESTS: u64 = 20_000;
-const QC_STAGE_TESTS: u64 = 200;
+const QC_TESTS: u64 = 10_000;
+const QC_MAX_TESTS: u64 = 100_000;
+const QC_STAGE_TESTS: u64 = 10_000;
 
 const EPS_LIST: [f64; 12] = [
     1.0e-2, 1.0e-4, 1.0e-6, 1.0e-8, 1.0e-10, 1.0e-12, 1.0e-14, 1.0e-16, 1.0e-18, 1.0e-20, 1.0e-24,
@@ -253,13 +253,13 @@ fn property_incircle_consistency(
 }
 
 #[test]
-#[timeout(5000)]
+#[timeout(120000)]
 fn quickcheck_orient2d_consistency() {
     run_qc(property_orient2d_consistency);
 }
 
 #[test]
-#[timeout(5000)]
+#[timeout(120000)]
 fn quickcheck_incircle_consistency() {
     run_qc_incircle(property_incircle_consistency);
 }
@@ -520,37 +520,37 @@ fn property_apfp_signum_cmp_dist_stage(seed: u64, stage: Stage) -> TestResult {
 }
 
 #[test]
-#[timeout(8000)]
+#[timeout(120000)]
 fn quickcheck_apfp_signum_orient2d_fast() {
     run_qc_seed(|seed| property_apfp_signum_orient2d_stage(seed, Stage::Fast));
 }
 
 #[test]
-#[timeout(8000)]
+#[timeout(120000)]
 fn quickcheck_apfp_signum_orient2d_dd() {
     run_qc_seed(|seed| property_apfp_signum_orient2d_stage(seed, Stage::Dd));
 }
 
 #[test]
-#[timeout(12000)]
+#[timeout(120000)]
 fn quickcheck_apfp_signum_orient2d_exact() {
     run_qc_seed(|seed| property_apfp_signum_orient2d_stage(seed, Stage::Exact));
 }
 
 #[test]
-#[timeout(8000)]
+#[timeout(120000)]
 fn quickcheck_apfp_signum_cmp_dist_fast() {
     run_qc_seed(|seed| property_apfp_signum_cmp_dist_stage(seed, Stage::Fast));
 }
 
 #[test]
-#[timeout(8000)]
+#[timeout(120000)]
 fn quickcheck_apfp_signum_cmp_dist_dd() {
     run_qc_seed(|seed| property_apfp_signum_cmp_dist_stage(seed, Stage::Dd));
 }
 
 #[test]
-#[timeout(8000)]
+#[timeout(120000)]
 fn quickcheck_apfp_signum_cmp_dist_exact() {
     run_qc_seed(|seed| property_apfp_signum_cmp_dist_stage(seed, Stage::Exact));
 }
@@ -635,7 +635,7 @@ fn property_orient2d_vec_consistency(
 }
 
 #[test]
-#[timeout(5000)]
+#[timeout(120000)]
 fn quickcheck_orient2d_vec_consistency() {
     run_qc(property_orient2d_vec_consistency);
 }
@@ -734,19 +734,19 @@ fn property_apfp_signum_orient2d_vec_stage(seed: u64, stage: Stage) -> TestResul
 }
 
 #[test]
-#[timeout(8000)]
+#[timeout(120000)]
 fn quickcheck_apfp_signum_orient2d_vec_fast() {
     run_qc_seed(|seed| property_apfp_signum_orient2d_vec_stage(seed, Stage::Fast));
 }
 
 #[test]
-#[timeout(8000)]
+#[timeout(120000)]
 fn quickcheck_apfp_signum_orient2d_vec_dd() {
     run_qc_seed(|seed| property_apfp_signum_orient2d_vec_stage(seed, Stage::Dd));
 }
 
 #[test]
-#[timeout(12000)]
+#[timeout(120000)]
 fn quickcheck_apfp_signum_orient2d_vec_exact() {
     run_qc_seed(|seed| property_apfp_signum_orient2d_vec_stage(seed, Stage::Exact));
 }
@@ -834,7 +834,7 @@ fn property_orient2d_normal_consistency(
 }
 
 #[test]
-#[timeout(5000)]
+#[timeout(120000)]
 fn quickcheck_orient2d_normal_consistency() {
     run_qc(property_orient2d_normal_consistency);
 }
@@ -934,19 +934,19 @@ fn property_apfp_signum_orient2d_normal_stage(seed: u64, stage: Stage) -> TestRe
 }
 
 #[test]
-#[timeout(8000)]
+#[timeout(120000)]
 fn quickcheck_apfp_signum_orient2d_normal_fast() {
     run_qc_seed(|seed| property_apfp_signum_orient2d_normal_stage(seed, Stage::Fast));
 }
 
 #[test]
-#[timeout(8000)]
+#[timeout(120000)]
 fn quickcheck_apfp_signum_orient2d_normal_dd() {
     run_qc_seed(|seed| property_apfp_signum_orient2d_normal_stage(seed, Stage::Dd));
 }
 
 #[test]
-#[timeout(12000)]
+#[timeout(120000)]
 fn quickcheck_apfp_signum_orient2d_normal_exact() {
     run_qc_seed(|seed| property_apfp_signum_orient2d_normal_stage(seed, Stage::Exact));
 }
@@ -955,6 +955,7 @@ fn quickcheck_apfp_signum_orient2d_normal_exact() {
 // Integer signum tests against num::BigInt
 // ============================================================================
 
+use apfp::geometry::i8 as i8_types;
 use apfp::geometry::i32 as i32_types;
 use apfp::geometry::i64 as i64_types;
 use apfp::int_signum;
@@ -966,6 +967,23 @@ fn sign_to_i32(sign: Sign) -> i32 {
         Sign::Minus => -1,
         Sign::NoSign => 0,
     }
+}
+
+fn orient2d_bigint_i8(ax: i8, ay: i8, bx: i8, by: i8, cx: i8, cy: i8) -> i32 {
+    let ax = NumBigInt::from(ax);
+    let ay = NumBigInt::from(ay);
+    let bx = NumBigInt::from(bx);
+    let by = NumBigInt::from(by);
+    let cx = NumBigInt::from(cx);
+    let cy = NumBigInt::from(cy);
+
+    let adx = &ax - &cx;
+    let ady = &ay - &cy;
+    let bdx = &bx - &cx;
+    let bdy = &by - &cy;
+
+    let det = &adx * &bdy - &ady * &bdx;
+    sign_to_i32(det.sign())
 }
 
 fn orient2d_bigint_i32(ax: i32, ay: i32, bx: i32, by: i32, cx: i32, cy: i32) -> i32 {
@@ -1151,6 +1169,44 @@ fn int_orient2d_i64_matches_bigint() {
     }
 }
 
+fn property_int_orient2d_i8_consistency_bounded(seed: u64) -> TestResult {
+    let mut state = seed;
+
+    fn lcg_i8(state: &mut u64) -> i8 {
+        *state = state.wrapping_mul(LCG_A).wrapping_add(LCG_C);
+        (*state >> 56) as i8
+    }
+
+    let ax = lcg_i8(&mut state);
+    let ay = lcg_i8(&mut state);
+    let bx = lcg_i8(&mut state);
+    let by = lcg_i8(&mut state);
+    let cx = lcg_i8(&mut state);
+    let cy = lcg_i8(&mut state);
+
+    let a = i8_types::Coord::new(ax, ay);
+    let b = i8_types::Coord::new(bx, by);
+    let c = i8_types::Coord::new(cx, cy);
+
+    let ours = match i8_types::orient2d(&a, &b, &c) {
+        Orientation::CounterClockwise => 1,
+        Orientation::Clockwise => -1,
+        Orientation::CoLinear => 0,
+    };
+    let expected = orient2d_bigint_i8(ax, ay, bx, by, cx, cy);
+
+    TestResult::from_bool(ours == expected)
+}
+
+#[test]
+#[timeout(120000)]
+fn quickcheck_int_orient2d_i8() {
+    QuickCheck::new()
+        .tests(QC_STAGE_TESTS)
+        .max_tests(QC_MAX_TESTS)
+        .quickcheck(property_int_orient2d_i8_consistency_bounded as fn(u64) -> TestResult);
+}
+
 fn property_int_orient2d_i32_consistency_bounded(seed: u64) -> TestResult {
     let mut state = seed;
 
@@ -1181,7 +1237,7 @@ fn property_int_orient2d_i32_consistency_bounded(seed: u64) -> TestResult {
 }
 
 #[test]
-#[timeout(5000)]
+#[timeout(120000)]
 fn quickcheck_int_orient2d_i32() {
     QuickCheck::new()
         .tests(QC_STAGE_TESTS)
@@ -1221,7 +1277,7 @@ fn property_int_orient2d_i64_consistency_bounded(seed: u64) -> TestResult {
 }
 
 #[test]
-#[timeout(8000)]
+#[timeout(120000)]
 fn quickcheck_int_orient2d_i64() {
     QuickCheck::new()
         .tests(QC_STAGE_TESTS)
@@ -1259,7 +1315,7 @@ fn property_int_cmp_dist_i32_consistency_bounded(seed: u64) -> TestResult {
 }
 
 #[test]
-#[timeout(5000)]
+#[timeout(120000)]
 fn quickcheck_int_cmp_dist_i32() {
     QuickCheck::new()
         .tests(QC_STAGE_TESTS)
